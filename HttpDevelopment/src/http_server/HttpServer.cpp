@@ -1,11 +1,18 @@
 #include "HttpServer.h"
 #include "esp_log.h"
+// #include "../motor_controller/MotorController.h"
+#include "../motorControl_controller/MotorController.h"
 
+// Logger TAG
 static const char *TAG = "HttpServer";
+
+// Motor kontrol nesnesi
+static MotorController motor(GPIO_NUM_26, GPIO_NUM_14, GPIO_NUM_25, GPIO_NUM_27);
 
 HttpServer::HttpServer() 
     : server_handle(nullptr), led(GPIO_NUM_2) { // Tanımlama sırasına göre inisyalize edildi
     ESP_LOGI(TAG, "HTTP Server nesnesi oluşturuldu.");
+    motor.init(); // Motor kontrolünü başlat
 }
 
 HttpServer::~HttpServer() {
@@ -43,6 +50,33 @@ void HttpServer::start() {
             .user_ctx = &led
         };
         httpd_register_uri_handler(server_handle, &led_off_uri);
+
+        // Motor Right endpoint
+        httpd_uri_t motor_right_uri = {
+            .uri = "/motor/right",
+            .method = HTTP_GET,
+            .handler = handle_motor_right,
+            .user_ctx = nullptr
+        };
+        httpd_register_uri_handler(server_handle, &motor_right_uri);
+
+        // Motor Left endpoint
+        httpd_uri_t motor_left_uri = {
+            .uri = "/motor/left",
+            .method = HTTP_GET,
+            .handler = handle_motor_left,
+            .user_ctx = nullptr
+        };
+        httpd_register_uri_handler(server_handle, &motor_left_uri);
+
+        // Motor Stop endpoint
+        httpd_uri_t motor_stop_uri = {
+            .uri = "/motor/stop",
+            .method = HTTP_GET,
+            .handler = handle_motor_stop,
+            .user_ctx = nullptr
+        };
+        httpd_register_uri_handler(server_handle, &motor_stop_uri);
     } else {
         ESP_LOGE(TAG, "HTTP Server başlatılamadı.");
     }
@@ -56,7 +90,7 @@ void HttpServer::stop() {
 }
 
 esp_err_t HttpServer::handle_root(httpd_req_t *req) {
-    const char *response = "Hello, ESP32! Use /led/on or /led/off to control the LED.";
+    const char *response = "Hello, ESP32! Use /led/on, /led/off, /motor/right, /motor/left, or /motor/stop to control the devices.";
     httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
@@ -72,5 +106,23 @@ esp_err_t HttpServer::handle_led_off(httpd_req_t *req) {
     LedController *led = static_cast<LedController *>(req->user_ctx); // LED kontrol sınıfını al
     led->off(); // LED'i söndür
     httpd_resp_send(req, "LED is OFF", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+esp_err_t HttpServer::handle_motor_right(httpd_req_t *req) {
+    motor.turnRight(); // Motor sağa döner
+    httpd_resp_send(req, "Motor turning right", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+esp_err_t HttpServer::handle_motor_left(httpd_req_t *req) {
+    motor.turnLeft(); // Motor sola döner
+    httpd_resp_send(req, "Motor turning left", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+esp_err_t HttpServer::handle_motor_stop(httpd_req_t *req) {
+    motor.stop(); // Motor durdurulur
+    httpd_resp_send(req, "Motor stopped", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
