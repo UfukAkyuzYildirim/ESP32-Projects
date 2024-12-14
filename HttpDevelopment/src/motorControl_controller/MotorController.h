@@ -8,8 +8,8 @@ class MotorController {
 public:
     MotorController(gpio_num_t right_pwm, gpio_num_t left_pwm, gpio_num_t right_enable, gpio_num_t left_enable);
     void init();
-    void turnRight();
-    void turnLeft();
+    void turnRight(int duty=50);
+    void turnLeft(int duty=50);
     void stop();
 
 private:

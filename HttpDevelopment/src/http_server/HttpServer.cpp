@@ -110,15 +110,41 @@ esp_err_t HttpServer::handle_led_off(httpd_req_t *req) {
 }
 
 esp_err_t HttpServer::handle_motor_right(httpd_req_t *req) {
-    motor.turnRight(); // Motor sağa döner
-    httpd_resp_send(req, "Motor turning right", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
+    // "duty" parametresini al
+    char query[64];
+    size_t query_len = httpd_req_get_url_query_len(req) + 1;
+    if (query_len > 1 && httpd_req_get_url_query_str(req, query, query_len) == ESP_OK) {
+        char duty_str[8];
+        if (httpd_query_key_value(query, "duty", duty_str, sizeof(duty_str)) == ESP_OK) {
+            int duty = atoi(duty_str); // String'den integer'a çevir
+            if (duty >= 0 && duty <= 100) {
+                motor.turnRight(duty); // Motor sağa döner
+                httpd_resp_send(req, "Motor turning right", HTTPD_RESP_USE_STRLEN);
+                return ESP_OK;
+            }
+        }
+    }
+    httpd_resp_send(req, "Invalid or missing 'duty' parameter", HTTPD_RESP_USE_STRLEN);
+    return ESP_ERR_INVALID_ARG;
 }
 
 esp_err_t HttpServer::handle_motor_left(httpd_req_t *req) {
-    motor.turnLeft(); // Motor sola döner
-    httpd_resp_send(req, "Motor turning left", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
+    // "duty" parametresini al
+    char query[64];
+    size_t query_len = httpd_req_get_url_query_len(req) + 1;
+    if (query_len > 1 && httpd_req_get_url_query_str(req, query, query_len) == ESP_OK) {
+        char duty_str[8];
+        if (httpd_query_key_value(query, "duty", duty_str, sizeof(duty_str)) == ESP_OK) {
+            int duty = atoi(duty_str); // String'den integer'a çevir
+            if (duty >= 0 && duty <= 100) {
+                motor.turnLeft(duty); // Motor sola döner
+                httpd_resp_send(req, "Motor turning left", HTTPD_RESP_USE_STRLEN);
+                return ESP_OK;
+            }
+        }
+    }
+    httpd_resp_send(req, "Invalid or missing 'duty' parameter", HTTPD_RESP_USE_STRLEN);
+    return ESP_ERR_INVALID_ARG;
 }
 
 esp_err_t HttpServer::handle_motor_stop(httpd_req_t *req) {
