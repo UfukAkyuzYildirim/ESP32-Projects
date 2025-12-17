@@ -7,8 +7,8 @@
 static const char *TAG = "MAIN";
 
 // Wi-Fi ağı bilgileri
-#define WIFI_SSID "witaminsiz"     // Buraya Wi-Fi ağınızın adı
-#define WIFI_PASS "Abuzer123" // Buraya Wi-Fi şifreniz
+#define WIFI_SSID "witaminsiz"
+#define WIFI_PASS "Abuzer123"
 
 // Wi-Fi'ye bağlanma fonksiyonu
 void wifi_init() {
