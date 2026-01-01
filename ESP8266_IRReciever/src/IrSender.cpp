@@ -10,8 +10,12 @@ void IrSender::begin() {
     Serial.printf("IR Verici baslatildi (Pin: %d)\n", pin);
 }
 
+void IrSender::sendRaw(const uint16_t* rawData, uint16_t len, uint16_t freq) {
+    irsend->sendRaw(rawData, len, freq);
+}
+
 void IrSender::send(decode_results *results) {
-    if (results->value == 0) {
+    if (results->value == 0 && results->decode_type != UNKNOWN) {
         Serial.println("Gonderilecek gecerli bir kod yok!");
         return;
     }
@@ -23,8 +27,6 @@ void IrSender::send(decode_results *results) {
     Serial.println();
 
     // Protokol tipine gore gonderme islemi
-    // Kutuphane her protokol icin ayri fonksiyon kullaniyor, 
-    // en yaygin olanlari buraya ekledim.
     switch (results->decode_type) {
         case NEC:
             irsend->sendNEC(results->value, results->bits);
@@ -32,9 +34,7 @@ void IrSender::send(decode_results *results) {
         case SONY:
             irsend->sendSony(results->value, results->bits);
             break;
-        /* case SAMSUNG:
-            irsend->sendSamsung(results->value, results->bits);
-            break; */
+        // Samsung kaldirildi (Guncel kutuphanede farkli versiyonlari var)
         case RC5:
             irsend->sendRC5(results->value, results->bits);
             break;
@@ -51,22 +51,19 @@ void IrSender::send(decode_results *results) {
             irsend->sendJVC(results->value, results->bits);
             break;
         case UNKNOWN:
-            Serial.println("Bilinmeyen protokol (RAW) algilandi. Ham veri gonderiliyor...");
-            {
-                // Raw veriyi gondermek icin uygun formata cevir (Mikrosaniye cinsinden)
-                // resultToRawArray fonksiyonu dinamik bellek ayirir, is bitince silmeliyiz.
-                uint16_t *raw_array = resultToRawArray(results);
-                // rawlen eleman sayisidir, sendRaw frekans olarak genellikle 38kHz kullanir.
-                results->rawlen = results->rawlen - 1; // Genelde ilk eleman atlanir
-                irsend->sendRaw(raw_array, results->rawlen, 38); 
-                delete [] raw_array; // Bellek sizintisini onle
-                Serial.println("RAW gonderme tamamlandi.");
-            }
+            Serial.println("Bilinmeyen protokol (RAW). Manuel RAW gonderme kullanilmali.");
             break;
         default:
-            Serial.println("Bu protokol icin henuz case eklenmedi, kutuphaneden eklenebilir.");
-            // Diger protokoller icin (Coolix, Whynter vs) buraya ekleme yapilabilir.
-            // irsend->sendCoolix(...) gibi.
+            Serial.println("Bu protokol icin henuz case eklenmedi!");
             break;
     }
+}
+
+// Yeni eklenen overload metod
+void IrSender::send(decode_type_t type, uint64_t value, uint16_t bits) {
+    decode_results tempResults;
+    tempResults.decode_type = type;
+    tempResults.value = value;
+    tempResults.bits = bits;
+    this->send(&tempResults);
 }

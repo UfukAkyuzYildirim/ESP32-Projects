@@ -2,6 +2,7 @@
 #include <IRutils.h>
 #include <ESP8266WebServer.h>
 #include <ArduinoJson.h>
+#include <vector>
 
 #include "Config.h"
 #include "ButtonHandler.h"
@@ -15,14 +16,24 @@ ButtonHandler button(PIN_BUTTON);
 StatusLed statusLed(PIN_LED);
 IrReader irReader(PIN_IR_RECV);
 IrSender irSender(PIN_IR_SEND);
-WifiManager wifiManager(WIFI_SSID, WIFI_PASS);
+WifiManager wifiManager;
 ESP8266WebServer server(HTTP_PORT);
 
+// --- Veri Yapisi ---
+struct CapturedSignal {
+    String protocolName;
+    decode_type_t protocolId;
+    uint64_t value;
+    uint16_t bits;
+    std::vector<uint16_t> rawData; // Sadece UNKNOWN ise dolar
+    bool hasRaw;
+};
+
+// Maksimum kac sinyal tutulacak
+#define MAX_SIGNAL_BUFFER 10
+
 // --- Degiskenler ---
-decode_results lastResults;      // Son okunan IR kodu
-uint16_t *savedRawData = nullptr;// RAW veriyi saklamak icin pointer
-uint16_t savedRawLength = 0;     // RAW veri uzunlugu
-bool hasNewData = false;         // API icin yeni veri var mi bayragi
+std::vector<CapturedSignal> signalBuffer; // Sinyal listesi
 
 bool isLearningMode = false;     // Ogrenme Modu Durumu
 unsigned long learningTimer = 0; // 30 saniyelik zaman asimi sayaci
@@ -30,20 +41,50 @@ unsigned long learningTimer = 0; // 30 saniyelik zaman asimi sayaci
 // --- Yardimci Fonksiyonlar ---
 
 // Hafizayi temizler
-void clearSavedData() {
-    if (savedRawData != nullptr) {
-        delete [] savedRawData;
-        savedRawData = nullptr;
-    }
-    savedRawLength = 0;
-    hasNewData = false;
-    // lastResults sifirlama gerekmiyor, uzerine yaziliyor
+void clearSignalBuffer() {
+    signalBuffer.clear();
 }
+
+// Yeni sinyali listeye ekle (Tekrarlari onler)
+void addSignalToBuffer(decode_results *results) {
+    if (signalBuffer.size() >= MAX_SIGNAL_BUFFER) {
+        Serial.println(">> Buffer dolu! Yeni sinyal kabul edilmiyor.");
+        return;
+    }
+
+    for (const auto& s : signalBuffer) {
+        if (s.protocolId == results->decode_type && s.value == results->value) {
+            Serial.println(">> Bu sinyal zaten listede var. Eklenmedi.");
+            return;
+        }
+    }
+
+    CapturedSignal newSignal;
+    newSignal.protocolName = typeToString(results->decode_type);
+    newSignal.protocolId = results->decode_type;
+    newSignal.value = results->value;
+    newSignal.bits = results->bits;
+    
+    if (results->decode_type == UNKNOWN) {
+        newSignal.hasRaw = true;
+        uint16_t *rawArray = resultToRawArray(results);
+        uint16_t rawLen = getCorrectedRawLength(results);
+        
+        newSignal.rawData.assign(rawArray, rawArray + rawLen);
+        
+        delete [] rawArray; 
+    } else {
+        newSignal.hasRaw = false;
+    }
+
+    signalBuffer.push_back(newSignal);
+    Serial.printf(">> Sinyal Eklendi. Buffer: %d/%d\n", signalBuffer.size(), MAX_SIGNAL_BUFFER);
+}
+
 
 // Ogrenme Modunu Baslat
 void startLearningMode() {
     if (isLearningMode) {
-        // Zaten aciksa sadece sureyi uzat
         learningTimer = millis();
         Serial.println(">> Ogrenme Modu Suresi Uzatildi.");
         return; 
@@ -52,8 +93,8 @@ void startLearningMode() {
     Serial.println(">> OGRENME MODU AKTIF! (30 sn sure basladi)");
     isLearningMode = true;
     learningTimer = millis();
+    clearSignalBuffer(); 
     
-    // IR Aliciyi baslat/temizle
     irReader.begin(); 
     irReader.resume();
 }
@@ -72,8 +113,76 @@ void stopLearningMode() {
 void handleRoot() {
     String msg = "ESP8266 IR Gateway Calisiyor.\n";
     msg += "IP: " + wifiManager.getIp() + "\n";
-    msg += "Durum: " + String(isLearningMode ? "OGRENME MODU" : "Beklemede");
+    msg += "WiFi: " + String(wifiManager.isConnected() ? "STA" : (wifiManager.isSetupApActive() ? "AP(SETUP)" : "OFF")) + "\n";
+    if (wifiManager.isSetupApActive()) {
+        msg += "SetupAP SSID: " + wifiManager.getSetupApSsid() + "\n";
+        msg += "WiFi ayarlamak icin: POST /wifi/config (JSON)\n";
+    }
+    msg += "Durum: " + String(isLearningMode ? "OGRENME MODU" : "Beklemede") + "\n";
+    msg += "Yakalanan Sinyal: " + String(signalBuffer.size());
     server.send(200, "text/plain", msg);
+}
+
+// GET /status
+void handleStatus() {
+    JsonDocument doc;
+    doc["ip"] = wifiManager.getIp();
+    doc["wifi_mode"] = wifiManager.isConnected() ? "STA" : (wifiManager.isSetupApActive() ? "AP" : "OFF");
+    doc["setup_ap_ssid"] = wifiManager.getSetupApSsid();
+    doc["learning"] = isLearningMode;
+    doc["buffer_count"] = (int)signalBuffer.size();
+
+    String out;
+    serializeJson(doc, out);
+    server.send(200, "application/json", out);
+}
+
+// POST /wifi/config
+// Body: {"ssid":"...","pass":"..."}
+void handleWifiConfig() {
+    if (!wifiManager.isSetupApActive() && wifiManager.isConnected()) {
+        server.send(403, "text/plain", "WiFi config only allowed in setup mode");
+        return;
+    }
+
+    if (!server.hasArg("plain")) {
+        server.send(400, "text/plain", "Body missing");
+        return;
+    }
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, server.arg("plain"));
+    if (error) {
+        server.send(400, "text/plain", "Invalid JSON");
+        return;
+    }
+
+    if (!doc["ssid"].is<const char*>()) {
+        server.send(400, "text/plain", "Missing ssid");
+        return;
+    }
+
+    String ssid = String((const char*)doc["ssid"]);
+    String pass = doc["pass"].is<const char*>() ? String((const char*)doc["pass"]) : String("");
+
+    if (ssid.length() == 0 || ssid.length() > 32) {
+        server.send(400, "text/plain", "Invalid ssid length");
+        return;
+    }
+    if (pass.length() > 64) {
+        server.send(400, "text/plain", "Invalid pass length");
+        return;
+    }
+
+    bool ok = wifiManager.saveCredentials(ssid, pass);
+    if (!ok) {
+        server.send(500, "text/plain", "Failed to save credentials");
+        return;
+    }
+
+    server.send(200, "application/json", "{\"status\":\"saved\",\"restarting\":true}");
+    delay(250);
+    ESP.restart();
 }
 
 // GET /ir/learn
@@ -84,27 +193,34 @@ void handleStartLearn() {
 
 // GET /ir/data
 void handleGetData() {
-    if (!hasNewData) {
-        server.send(204, "application/json", ""); // No Content
+    if (signalBuffer.empty()) {
+        if(isLearningMode) {
+             server.send(200, "application/json", "[]");
+        } else {
+             server.send(204, "application/json", ""); 
+        }
         return;
     }
 
-    // JSON Olusturma
-    // RAW data buyuk olabilir, DynamicJsonDocument boyutunu iyi ayarlamak lazim.
-    // Klima kumandalari icin 200-300 elemanli array olabilir. 
-    // 4KB (4096) genelde yeterli.
-    DynamicJsonDocument doc(4096);
+    // JSON Olusturma (ArduinoJson v7 uyumlu)
+    JsonDocument doc; // v7'de boyut otomatik veya dinamik
 
-    doc["protocol"] = typeToString(lastResults.decode_type);
-    doc["protocol_id"] = (int)lastResults.decode_type;
-    doc["value"] = (uint32_t)lastResults.value; // 64 bit destegi gerekirse string'e cevirilmeli
-    doc["bits"] = lastResults.bits;
-    doc["raw_len"] = savedRawLength;
+    JsonArray root = doc.to<JsonArray>();
 
-    JsonArray rawArray = doc.createNestedArray("raw_data");
-    if (savedRawData != nullptr) {
-        for (uint16_t i = 0; i < savedRawLength; i++) {
-            rawArray.add(savedRawData[i]);
+    for (const auto& s : signalBuffer) {
+        JsonObject obj = root.add<JsonObject>();
+        obj["protocol"] = s.protocolName;
+        obj["protocol_id"] = (int)s.protocolId;
+        
+        obj["value"] = (uint32_t)s.value;
+        obj["bits"] = s.bits;
+        obj["has_raw"] = s.hasRaw;
+
+        if (s.hasRaw) {
+             JsonArray rawArr = obj["raw_data"].to<JsonArray>();
+             for(uint16_t r : s.rawData) {
+                 rawArr.add(r);
+             }
         }
     }
 
@@ -113,10 +229,9 @@ void handleGetData() {
 
     server.send(200, "application/json", jsonOutput);
 
-    // Veri gonderildikten sonra temizle (Read-Once mantigi)
-    Serial.println(">> Veri API uzerinden cekildi ve silindi.");
-    clearSavedData();
-    stopLearningMode(); // Veri alindiginda ogrenme modundan cikmak mantikli olabilir
+    Serial.println(">> Veri Listesi API ile cekildi. Buffer temizleniyor.");
+    clearSignalBuffer();
+    stopLearningMode(); 
 }
 
 // POST /ir/send
@@ -127,7 +242,7 @@ void handleSend() {
     }
 
     String body = server.arg("plain");
-    DynamicJsonDocument doc(4096);
+    JsonDocument doc;
     DeserializationError error = deserializeJson(doc, body);
 
     if (error) {
@@ -137,10 +252,8 @@ void handleSend() {
 
     Serial.println(">> API'den Gonderme Istegi Geldi...");
 
-    // RAW veri var mi kontrol et
-    bool isRaw = doc.containsKey("raw_data");
-    
-    if (isRaw) {
+    // RAW veri oncelikli
+    if (doc["raw_data"].is<JsonArray>()) {
         JsonArray rawArray = doc["raw_data"];
         uint16_t len = rawArray.size();
         uint16_t *rawBuffer = new uint16_t[len];
@@ -149,27 +262,28 @@ void handleSend() {
             rawBuffer[i] = rawArray[i];
         }
         
-        // Frekans genelde 38kHz
         uint16_t freq = 38; 
-        if (doc.containsKey("freq")) freq = doc["freq"];
+        if (doc["freq"].is<uint16_t>()) freq = doc["freq"];
 
         Serial.printf(">> RAW Gonderme Basliyor (%d eleman)...\n", len);
         
-        IRsend tempSender(PIN_IR_SEND);
-        tempSender.begin();
-        tempSender.sendRaw(rawBuffer, len, freq);
+        // Wrapper uzerinden gonder
+        irSender.sendRaw(rawBuffer, len, freq);
         
         delete[] rawBuffer;
-    } else {
-        // Standart protokol gonderme
-        // Burasi biraz karisik cunku IRremoteESP8266 send fonksiyonlari ayri ayri.
-        // decode_type enum'ina gore switch-case yapmak lazim ama cok uzun.
-        // Simdilik sadece RAW uzerinden gitmek en garantisi.
-        // Veya "send(decode_type, value, bits)" fonksiyonu generic yok.
         
-        Serial.println("!! UYARI: Su an sadece RAW gonderme tam destekleniyor.");
-        // Gerekirse buraya protokol bazli switch-case eklenebilir.
-        // Ancak hub tarafi zaten RAW veriyi de kaydettigi icin RAW gondermeyi tercih etmeliyiz.
+    } else if (doc["protocol_id"].is<int>() && doc["value"].is<uint32_t>()) {
+        int protocol = doc["protocol_id"];
+        uint64_t value = doc["value"];
+        int bits = doc["bits"]; 
+
+        Serial.printf(">> Protokol (%d) Deger (%u) Gonderiliyor...\n", protocol, (uint32_t)value);
+        
+        irSender.send((decode_type_t)protocol, value, bits);
+        
+    } else {
+        server.send(400, "text/plain", "Missing raw_data OR protocol/value");
+        return;
     }
 
     server.send(200, "application/json", "{\"status\":\"Signal Sent\"}");
@@ -181,26 +295,22 @@ void setup() {
     delay(1000);
     Serial.println("\n\n--- IR Gateway Sistemi Baslatildi ---");
 
-    // Donanim Baslatma
     button.begin();
     statusLed.begin();
     irSender.begin();
-    
-    // Wi-Fi Baslatma
     wifiManager.begin();
 
-    // Server Rotalari
     server.on("/", HTTP_GET, handleRoot);
-    server.on("/ir/learn", HTTP_GET, handleStartLearn); // POST da olabilir ama tarayicidan test icin GET kolay
+    server.on("/status", HTTP_GET, handleStatus);
+    server.on("/wifi/config", HTTP_POST, handleWifiConfig);
+    server.on("/ir/learn", HTTP_GET, handleStartLearn); 
     server.on("/ir/data", HTTP_GET, handleGetData);
     server.on("/ir/send", HTTP_POST, handleSend);
 
     server.begin();
     Serial.println("HTTP Sunucu Baslatildi.");
 
-    // IR Okuyucu (Baslangicta pasif olabilir ama startLearningMode icinde aciliyor)
     irReader.begin();
-
     Serial.println("Sistem Hazir.");
 }
 
@@ -208,15 +318,10 @@ void setup() {
 void loop() {
     server.handleClient();
     wifiManager.loop();
-
     unsigned long currentMillis = millis();
 
-    // 1. Buton Kontrolleri
-    // ------------------------------------------------
     if (button.isLongPressed()) {
-        if (!isLearningMode) {
-            startLearningMode();
-        }
+        if (!isLearningMode) startLearningMode();
     }
 
     if (button.isTripleClicked()) {
@@ -226,9 +331,6 @@ void loop() {
         }
     }
 
-
-    // 2. Ogrenme Modu Mantigi
-    // ------------------------------------------------
     if (isLearningMode) {
         statusLed.blink(500, 1000);
 
@@ -239,21 +341,9 @@ void loop() {
 
         if (irReader.loop()) {
             Serial.println(">> Sinyal Algilandi!");
-            
             learningTimer = currentMillis;
-            clearSavedData();
-
-            lastResults = irReader.getResults();
-            
-            // RAW Kopyalama
-            savedRawData = resultToRawArray(&lastResults); 
-            savedRawLength = getCorrectedRawLength(&lastResults);
-            hasNewData = true; // API icin bayrak kaldir
-            
-            Serial.print("Protocol: ");
-            Serial.print(typeToString(lastResults.decode_type));
-            Serial.println(" >> Hafizaya Alindi. API ile cekilmeyi bekliyor.");
-
+            decode_results results = irReader.getResults();
+            addSignalToBuffer(&results);
             irReader.resume();
         }
     } else {

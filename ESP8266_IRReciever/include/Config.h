@@ -16,9 +16,15 @@
 #define TRIPLE_CLICK_COUNT    3     // Kac kere basilinca iptal olsun
 
 // Wifi Ayarlari
-#define WIFI_SSID "YOUR_WIFI_SSID"
-#define WIFI_PASS "YOUR_WIFI_PASSWORD"
 #define HTTP_PORT 8088
 
+// WiFi Provisioning (AP Setup) Ayarlari
+// Cihaz bir ağa bağlanamazsa kendi AP'ini açar ve bu AP üzerinden WiFi bilgileri set edilir.
+#define SETUP_AP_SSID_PREFIX "IR-Gateway-"
+// Boş bırakılırsa açık (şifresiz) AP olur. (En az 8 karakter olmalı)
+#define SETUP_AP_PASSWORD ""
+
+// WiFi bağlantı deneme süresi
+#define WIFI_CONNECT_TIMEOUT_MS 10000
 
 #endif
