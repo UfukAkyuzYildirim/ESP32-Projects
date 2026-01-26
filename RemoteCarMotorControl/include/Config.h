@@ -27,8 +27,8 @@ inline constexpr ledc_channel_t kRightPwmChannel = LEDC_CHANNEL_0;
 inline constexpr ledc_channel_t kLeftPwmChannel  = LEDC_CHANNEL_1;
 
 // Wi-Fi credentials (edit these for your network)
-inline constexpr char kWifiSsid[] = "witaminsiz";
-inline constexpr char kWifiPass[] = "Abuzer123";
+inline constexpr char kWifiSsid[] = "";
+inline constexpr char kWifiPass[] = "";
 
 // Optional static IP (leave disabled unless you know your LAN subnet)
 inline constexpr bool kUseStaticIp = true;

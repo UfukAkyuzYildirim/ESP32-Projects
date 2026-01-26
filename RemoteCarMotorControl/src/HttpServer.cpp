@@ -240,6 +240,9 @@ esp_err_t HttpServer::handle_ws(httpd_req_t *req) {
     }
     payload[ws_pkt.len] = '\0';
 
+    ESP_LOGI(kTag, "Received WS payload (%u bytes)", static_cast<unsigned>(ws_pkt.len));
+    ESP_LOG_BUFFER_HEXDUMP(kTag, payload, ws_pkt.len, ESP_LOG_INFO);
+
     // Supported payloads (text):
     // - "67" => right:67
     // - "right:67" / "left:30"
