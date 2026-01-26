@@ -5,7 +5,7 @@
 
 class StatusLed {
 public:
-    StatusLed(uint8_t pin);
+    StatusLed(uint8_t pin, bool activeLow = false);
     void begin();
     void on();
     void off();
@@ -16,8 +16,11 @@ private:
     uint8_t _pin;
     unsigned long _lastToggleTime;
     bool _ledState;
+    bool _activeLow;
     unsigned long _onTime;
     unsigned long _offTime;
+
+    void writePin(bool logicalOn);
 };
 
 #endif

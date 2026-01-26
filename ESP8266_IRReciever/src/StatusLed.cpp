@@ -1,26 +1,36 @@
 #include "StatusLed.h"
 
-StatusLed::StatusLed(uint8_t pin) {
+StatusLed::StatusLed(uint8_t pin, bool activeLow) {
     _pin = pin;
-    _ledState = LOW;
+    _ledState = false;
+    _activeLow = activeLow;
     _lastToggleTime = 0;
     _onTime = 500;
     _offTime = 500;
 }
 
+void StatusLed::writePin(bool logicalOn) {
+    // logicalOn=true => LED yanik
+    uint8_t level = logicalOn ? HIGH : LOW;
+    if (_activeLow) {
+        level = logicalOn ? LOW : HIGH;
+    }
+    digitalWrite(_pin, level);
+}
+
 void StatusLed::begin() {
     pinMode(_pin, OUTPUT);
-    digitalWrite(_pin, LOW);
+    writePin(false);
 }
 
 void StatusLed::on() {
-    digitalWrite(_pin, HIGH);
-    _ledState = HIGH;
+    writePin(true);
+    _ledState = true;
 }
 
 void StatusLed::off() {
-    digitalWrite(_pin, LOW);
-    _ledState = LOW;
+    writePin(false);
+    _ledState = false;
 }
 
 void StatusLed::setBlinkPattern(unsigned long onTime, unsigned long offTime) {
@@ -40,6 +50,6 @@ void StatusLed::blink(unsigned long onTime, unsigned long offTime) {
     if (now - _lastToggleTime >= interval) {
         _lastToggleTime = now;
         _ledState = !_ledState;
-        digitalWrite(_pin, _ledState);
+        writePin(_ledState);
     }
 }

@@ -2,20 +2,41 @@
 
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <ESP8266mDNS.h>
 
 static const char* kWifiConfigPath = "/wifi.json";
 
 WifiManager::WifiManager()
     : _fsReady(false),
-      _setupApActive(false) {}
+    _setupApActive(false) {}
+
+bool WifiManager::ensureFsReady() {
+    if (_fsReady) {
+        return true;
+    }
+
+    _fsReady = LittleFS.begin();
+    if (_fsReady) {
+        return true;
+    }
+
+    Serial.println("LittleFS mount basarisiz. Format deneniyor...");
+    if (!LittleFS.format()) {
+        Serial.println("LittleFS format basarisiz!");
+        return false;
+    }
+
+    _fsReady = LittleFS.begin();
+    if (!_fsReady) {
+        Serial.println("LittleFS mount (format sonrasi) basarisiz!");
+    }
+    return _fsReady;
+}
 
 bool WifiManager::loadCredentials() {
-    if (!_fsReady) {
-        _fsReady = LittleFS.begin();
-        if (!_fsReady) {
-            Serial.println("LittleFS mount basarisiz! WiFi config okunamadi.");
-            return false;
-        }
+    if (!ensureFsReady()) {
+        Serial.println("LittleFS hazir degil! WiFi config okunamadi.");
+        return false;
     }
 
     if (!LittleFS.exists(kWifiConfigPath)) {
@@ -49,12 +70,9 @@ bool WifiManager::loadCredentials() {
 }
 
 bool WifiManager::saveCredentials(const String& ssid, const String& password) {
-    if (!_fsReady) {
-        _fsReady = LittleFS.begin();
-        if (!_fsReady) {
-            Serial.println("LittleFS mount basarisiz! WiFi config yazilamadi.");
-            return false;
-        }
+    if (!ensureFsReady()) {
+        Serial.println("LittleFS hazir degil! WiFi config yazilamadi.");
+        return false;
     }
 
     String cleanSsid = ssid;
@@ -107,6 +125,16 @@ void WifiManager::connectSta() {
         Serial.println("WiFi Baglandi!");
         Serial.print("IP Adresi: ");
         Serial.println(WiFi.localIP());
+
+        if (MDNS.begin(MDNS_HOSTNAME)) {
+            MDNS.addService("http", "tcp", HTTP_PORT);
+            Serial.print("mDNS: http://");
+            Serial.print(MDNS_HOSTNAME);
+            Serial.print(".local:");
+            Serial.println(HTTP_PORT);
+        } else {
+            Serial.println("mDNS baslatilamadi!");
+        }
     } else {
         Serial.println();
         Serial.println("WiFi Baglantisi Basarisiz!");
@@ -115,6 +143,9 @@ void WifiManager::connectSta() {
 
 void WifiManager::startSetupAp() {
     _setupApActive = true;
+
+    // STA'dan AP'ye geciste mDNS'i kapat
+    MDNS.end();
 
     String chip = String(ESP.getChipId(), HEX);
     chip.toUpperCase();
@@ -142,11 +173,21 @@ void WifiManager::startSetupAp() {
     }
 }
 
+void WifiManager::enterSetupAp() {
+    Serial.println();
+    Serial.println("WiFi Setup AP moduna geciliyor (manuel)...");
+
+    // STA baglantisini kes
+    WiFi.disconnect();
+    delay(100);
+
+    startSetupAp();
+}
+
 void WifiManager::begin() {
     // LittleFS mount + config oku
-    _fsReady = LittleFS.begin();
-    if (!_fsReady) {
-        Serial.println("LittleFS mount basarisiz! Setup AP ile devam edilecek.");
+    if (!ensureFsReady()) {
+        Serial.println("LittleFS hazir degil! Setup AP ile devam edilecek.");
         startSetupAp();
         return;
     }
@@ -167,6 +208,8 @@ void WifiManager::loop() {
     if (WiFi.status() != WL_CONNECTED) {
         // Basit bir reconnect
         // WiFi.reconnect();
+    } else {
+        MDNS.update();
     }
 }
 

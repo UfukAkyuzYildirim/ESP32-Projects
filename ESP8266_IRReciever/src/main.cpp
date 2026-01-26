@@ -13,11 +13,27 @@
 
 // --- Global Nesneler ---
 ButtonHandler button(PIN_BUTTON);
-StatusLed statusLed(PIN_LED);
+StatusLed statusLedBuiltin(PIN_LED_BUILTIN, LED_BUILTIN_ACTIVE_LOW);
+StatusLed statusLedExternal(PIN_LED_EXTERNAL, LED_EXTERNAL_ACTIVE_LOW);
 IrReader irReader(PIN_IR_RECV);
 IrSender irSender(PIN_IR_SEND);
 WifiManager wifiManager;
 ESP8266WebServer server(HTTP_PORT);
+
+static inline void ledOn() {
+    statusLedBuiltin.on();
+    statusLedExternal.on();
+}
+
+static inline void ledOff() {
+    statusLedBuiltin.off();
+    statusLedExternal.off();
+}
+
+static inline void ledBlink(unsigned long onMs, unsigned long offMs) {
+    statusLedBuiltin.blink(onMs, offMs);
+    statusLedExternal.blink(onMs, offMs);
+}
 
 // --- Veri Yapisi ---
 struct CapturedSignal {
@@ -37,6 +53,49 @@ std::vector<CapturedSignal> signalBuffer; // Sinyal listesi
 
 bool isLearningMode = false;     // Ogrenme Modu Durumu
 unsigned long learningTimer = 0; // 30 saniyelik zaman asimi sayaci
+
+// /ir/data ile liste cekildikten sonra, bir sonraki yakalanan IR sinyalinde buffer'i
+// temizleyip o sinyali yeniden eklemek icin kullanilir.
+static bool clearBufferOnNextCapture = false;
+
+// LED durumlari
+// - Varsayilan: sonuk
+// - Ogrenme modu: hizli blink
+// - Normal modda (STA baglandi) acilista: 10 kere blink, sonra sonuk
+static bool bootBlinkActive = false;
+static uint8_t bootBlinkTogglesRemaining = 0; // 10 blink = 20 toggle
+static unsigned long bootBlinkLastToggleMs = 0;
+static bool bootBlinkLedOn = false;
+
+static void startBootBlink(uint8_t blinks) {
+    bootBlinkActive = true;
+    bootBlinkTogglesRemaining = blinks * 2;
+    bootBlinkLastToggleMs = millis();
+    bootBlinkLedOn = false;
+    ledOff();
+}
+
+static void loopBootBlink() {
+    if (!bootBlinkActive) return;
+    if (bootBlinkTogglesRemaining == 0) {
+        bootBlinkActive = false;
+        ledOff();
+        return;
+    }
+
+    const unsigned long now = millis();
+    const unsigned long intervalMs = 120;
+    if (now - bootBlinkLastToggleMs >= intervalMs) {
+        bootBlinkLastToggleMs = now;
+        bootBlinkLedOn = !bootBlinkLedOn;
+        if (bootBlinkLedOn) {
+            ledOn();
+        } else {
+            ledOff();
+        }
+        bootBlinkTogglesRemaining--;
+    }
+}
 
 // --- Yardimci Fonksiyonlar ---
 
@@ -94,6 +153,7 @@ void startLearningMode() {
     isLearningMode = true;
     learningTimer = millis();
     clearSignalBuffer(); 
+    clearBufferOnNextCapture = false;
     
     irReader.begin(); 
     irReader.resume();
@@ -105,7 +165,7 @@ void stopLearningMode() {
     
     Serial.println(">> Ogrenme Modu KAPATILDI. (Beklemeye gecildi)");
     isLearningMode = false;
-    statusLed.off();
+    ledOff();
 }
 
 // --- HTTP Handler Fonksiyonlari ---
@@ -180,6 +240,14 @@ void handleWifiConfig() {
         return;
     }
 
+    // 3 kez hızlı yanıp sönme animasyonu
+    for (int i = 0; i < 3; ++i) {
+        ledOn();
+        delay(150);
+        ledOff();
+        delay(150);
+    }
+
     server.send(200, "application/json", "{\"status\":\"saved\",\"restarting\":true}");
     delay(250);
     ESP.restart();
@@ -229,9 +297,10 @@ void handleGetData() {
 
     server.send(200, "application/json", jsonOutput);
 
-    Serial.println(">> Veri Listesi API ile cekildi. Buffer temizleniyor.");
-    clearSignalBuffer();
-    stopLearningMode(); 
+    // Liste cekildi: bir sonraki IR yakalamada yeni bir listeye baslamak icin
+    // buffer'i o anda temizleyecegiz.
+    Serial.println(">> Veri Listesi API ile cekildi. Sonraki sinyalde buffer temizlenecek.");
+    clearBufferOnNextCapture = true;
 }
 
 // POST /ir/send
@@ -255,23 +324,110 @@ void handleSend() {
     // RAW veri oncelikli
     if (doc["raw_data"].is<JsonArray>()) {
         JsonArray rawArray = doc["raw_data"];
-        uint16_t len = rawArray.size();
-        uint16_t *rawBuffer = new uint16_t[len];
-        
-        for (uint16_t i = 0; i < len; i++) {
-            rawBuffer[i] = rawArray[i];
-        }
-        
-        uint16_t freq = 38; 
+        uint16_t freq = 38;
         if (doc["freq"].is<uint16_t>()) freq = doc["freq"];
 
-        Serial.printf(">> RAW Gonderme Basliyor (%d eleman)...\n", len);
-        
-        // Wrapper uzerinden gonder
-        irSender.sendRaw(rawBuffer, len, freq);
-        
-        delete[] rawBuffer;
-        
+        // Nested array varsa ardışık paketler olarak ele al
+        if (rawArray.size() > 0 && rawArray[0].is<JsonArray>()) {
+            uint16_t gapMs = 30;
+            if (doc["gap_ms"].is<uint16_t>()) gapMs = doc["gap_ms"];
+
+            bool doubleNested = false;
+            JsonArray firstArray = rawArray[0].as<JsonArray>();
+            if (firstArray.size() > 0 && firstArray[0].is<JsonArray>()) {
+                doubleNested = true;
+            }
+
+            uint16_t totalPackets = 0;
+            if (doubleNested) {
+                for (JsonVariant groupVariant : rawArray) {
+                    if (!groupVariant.is<JsonArray>()) {
+                        server.send(400, "text/plain", "raw_data must contain arrays of integers");
+                        return;
+                    }
+                    JsonArray groupArray = groupVariant.as<JsonArray>();
+                    totalPackets += groupArray.size();
+                }
+            } else {
+                totalPackets = rawArray.size();
+            }
+
+            Serial.printf(">> RAW Dizi Gonderimi Basladi (%u paket) ...\n", totalPackets);
+
+            uint16_t packetCounter = 0;
+            auto sendPacket = [&](JsonArray packetArray) -> bool {
+                uint16_t len = packetArray.size();
+                if (len == 0) {
+                    return true;
+                }
+
+                uint16_t *rawBuffer = new uint16_t[len];
+                for (uint16_t i = 0; i < len; i++) {
+                    if (!packetArray[i].is<uint16_t>() && !packetArray[i].is<int>()) {
+                        delete[] rawBuffer;
+                        server.send(400, "text/plain", "raw_data must contain integer durations");
+                        return false;
+                    }
+                    rawBuffer[i] = packetArray[i];
+                }
+
+                packetCounter++;
+                Serial.printf(">> RAW Paket %u/%u Basliyor (%u eleman)...\n", packetCounter, totalPackets, len);
+                irSender.sendRaw(rawBuffer, len, freq);
+                Serial.printf(">> RAW Paket %u/%u Tamamlandi.\n", packetCounter, totalPackets);
+
+                delete[] rawBuffer;
+
+                if (packetCounter < totalPackets) {
+                    delay(gapMs);
+                }
+                return true;
+            };
+
+            if (doubleNested) {
+                for (JsonVariant groupVariant : rawArray) {
+                    JsonArray groupArray = groupVariant.as<JsonArray>();
+                    for (JsonVariant innerVariant : groupArray) {
+                        if (!innerVariant.is<JsonArray>()) {
+                            server.send(400, "text/plain", "raw_data must contain arrays of integers");
+                            return;
+                        }
+                        if (!sendPacket(innerVariant.as<JsonArray>())) {
+                            return;
+                        }
+                    }
+                }
+            } else {
+                for (JsonVariant packetVariant : rawArray) {
+                    if (!packetVariant.is<JsonArray>()) {
+                        server.send(400, "text/plain", "raw_data must contain arrays of integers");
+                        return;
+                    }
+                    if (!sendPacket(packetVariant.as<JsonArray>())) {
+                        return;
+                    }
+                }
+            }
+
+            Serial.println(">> RAW Dizi Gonderimi Tamamlandi.");
+
+        } else {
+            uint16_t len = rawArray.size();
+            uint16_t *rawBuffer = new uint16_t[len];
+
+            for (uint16_t i = 0; i < len; i++) {
+                rawBuffer[i] = rawArray[i];
+            }
+
+            Serial.printf(">> RAW Gonderme Basliyor (%d eleman)...\n", len);
+
+            // Wrapper uzerinden gonder
+            irSender.sendRaw(rawBuffer, len, freq);
+            Serial.println(">> RAW Gonderme Tamamlandi.");
+
+            delete[] rawBuffer;
+        }
+
     } else if (doc["protocol_id"].is<int>() && doc["value"].is<uint32_t>()) {
         int protocol = doc["protocol_id"];
         uint64_t value = doc["value"];
@@ -280,6 +436,7 @@ void handleSend() {
         Serial.printf(">> Protokol (%d) Deger (%u) Gonderiliyor...\n", protocol, (uint32_t)value);
         
         irSender.send((decode_type_t)protocol, value, bits);
+        Serial.println(">> Protokol Gonderimi Tamamlandi.");
         
     } else {
         server.send(400, "text/plain", "Missing raw_data OR protocol/value");
@@ -296,9 +453,16 @@ void setup() {
     Serial.println("\n\n--- IR Gateway Sistemi Baslatildi ---");
 
     button.begin();
-    statusLed.begin();
+    statusLedBuiltin.begin();
+    statusLedExternal.begin();
+    ledOff(); // Başlangıçta LED'ler kapalı
     irSender.begin();
     wifiManager.begin();
+
+    // Normal modda (STA baglandi) acilista 10 blink
+    if (wifiManager.isConnected()) {
+        startBootBlink(10);
+    }
 
     server.on("/", HTTP_GET, handleRoot);
     server.on("/status", HTTP_GET, handleStatus);
@@ -318,10 +482,21 @@ void setup() {
 void loop() {
     server.handleClient();
     wifiManager.loop();
+    button.loop();
     unsigned long currentMillis = millis();
 
-    if (button.isLongPressed()) {
-        if (!isLearningMode) startLearningMode();
+    // Buton: 2 sn bas-birak => ogrenme, 5 sn bas-birak => setup AP
+    unsigned long heldMs = 0;
+    if (button.getReleaseEvent(heldMs)) {
+        if (heldMs >= AP_PRESS_DURATION) {
+            // AP moduna gecince ogrenme modunu kapatalim
+            if (isLearningMode) {
+                stopLearningMode();
+            }
+            wifiManager.enterSetupAp();
+        } else if (heldMs >= LEARN_PRESS_DURATION) {
+            if (!isLearningMode) startLearningMode();
+        }
     }
 
     if (button.isTripleClicked()) {
@@ -331,9 +506,22 @@ void loop() {
         }
     }
 
+    // LED durumlari
+    // - Ogrenme modunda: hizli blink
+    // - STA baglandiysa (boot): 10 blink
+    // - AP (setup) modunda: sürekli yanık
+    // - Diger tum durumlar: sonuk
     if (isLearningMode) {
-        statusLed.blink(500, 1000);
+        ledBlink(100, 100);
+    } else if (bootBlinkActive) {
+        loopBootBlink();
+    } else if (wifiManager.isSetupApActive()) {
+        ledOn();
+    } else {
+        ledOff();
+    }
 
+    if (isLearningMode) {
         if (currentMillis - learningTimer > LEARN_MODE_TIMEOUT) {
             Serial.println(">> Zaman asimi!");
             stopLearningMode();
@@ -343,10 +531,15 @@ void loop() {
             Serial.println(">> Sinyal Algilandi!");
             learningTimer = currentMillis;
             decode_results results = irReader.getResults();
+
+            if (clearBufferOnNextCapture) {
+                Serial.println(">> /ir/data sonrasi ilk sinyal: Buffer temizleniyor ve sinyal yeniden eklenecek.");
+                clearSignalBuffer();
+                clearBufferOnNextCapture = false;
+            }
+
             addSignalToBuffer(&results);
             irReader.resume();
         }
-    } else {
-        statusLed.off();
     }
 }
