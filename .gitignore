@@ -1,0 +1,20 @@
+# PlatformIO build directories
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Local build outputs
+build/
+cmake-build*/
+
+# Editor settings
+.vscode/
+.idea/
+*.code-workspace
+
+# Python virtual environments
+.venv/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
