@@ -7,14 +7,16 @@
 
 class Antenna {
 private:
-    RF24* radio; // Managed dynamically to control initialization timing
+    RF24* radio;
     int cePin;
     int csnPin;
 
 public:
     Antenna(int ce, int csn);
     bool begin();
+    bool send(byte data); // Drone'a tek byte veri göndermek için
     void showDetails();
+    void testConnection(); // Yeni test fonksiyonu
 };
 
 #endif

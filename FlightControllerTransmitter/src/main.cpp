@@ -1,39 +1,46 @@
 #include <Arduino.h>
+#include <SPI.h>
 #include "Joystick.h"
-#include "Antenna.h"
+#include "DefaultEspAntenna.h"
 
-#define JOYSTICK_X_PIN 34
-#define JOYSTICK_Y_PIN 35
-#define JOYSTICK_SW_PIN 32
+// Joystick
+#define JOY_X    4 
+#define JOY_Y    5 
+#define JOY_SW   6 
 
-#define ANTENNA_CE_PIN 4
-#define ANTENNA_CSN_PIN 5
+// ESP-NOW icin karsi tarafin (FlightControl S3) MAC adresi
+// Log: E8:F6:0A:8A:D8:38 (COM14)
+const uint8_t RECEIVER_MAC[6] = {0xE8, 0xF6, 0x0A, 0x8A, 0xD8, 0x38};
 
-Joystick myJoystick(JOYSTICK_X_PIN, JOYSTICK_Y_PIN, JOYSTICK_SW_PIN);
-Antenna myAntenna(ANTENNA_CE_PIN, ANTENNA_CSN_PIN);
+DefaultEspAntenna espNowAntenna(RECEIVER_MAC, true); // true = gonderici
+Joystick myJoy(JOY_X, JOY_Y, JOY_SW);
 
 void setup() {
-    Serial.begin(115200);
-    delay(1000);
-    Serial.println("--- SYSTEM INITIALIZING ---");
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("--- KUMANDA (Gonderici - ESP32 S3, ESP-NOW) ---");
 
-    // Initialize joystick inputs
-    myJoystick.begin();
-    Serial.println("Joystick: OK");
+  myJoy.begin();
 
-    Serial.println("Probing RF module...");
-    if (myAntenna.begin()) {
-        Serial.println("✅ RF module detected");
-        myAntenna.showDetails();
-    } else {
-        Serial.println("❌ RF module failure, check wiring");
-        while (true) {
-            delay(1000);
-        }
-    }
+  if (espNowAntenna.begin()) {
+    Serial.println("✅ ESP-NOW hazir (Gonderici)");
+  } else {
+    Serial.println("❌ ESP-NOW baslamadi");
+    while(1);
+  }
 }
 
 void loop() {
-    myJoystick.printDebug();
-    delay(1000);
+  int xDegeri = myJoy.getX();
+  byte dataToSend = map(xDegeri, -1000, 1000, 0, 255);
+  
+  Serial.print("Joy: ");
+  Serial.print(xDegeri);
+    Serial.print(" -> Paket: ");
+    Serial.print(dataToSend);
+
+    bool sonuc = espNowAntenna.sendByte(dataToSend);
+    Serial.println(sonuc ? " -> [ILETILDI] ✅" : " -> [BASARISIZ] ❌");
+
+  delay(100);
 }
