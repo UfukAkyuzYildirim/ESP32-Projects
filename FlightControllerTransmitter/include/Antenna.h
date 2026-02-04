@@ -14,9 +14,9 @@ private:
 public:
     Antenna(int ce, int csn);
     bool begin();
-    bool send(byte data); // Drone'a tek byte veri göndermek için
+    bool send(byte data);
     void showDetails();
-    void testConnection(); // Yeni test fonksiyonu
+    void testConnection();
 };
 
 #endif

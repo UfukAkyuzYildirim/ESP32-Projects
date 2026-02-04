@@ -10,9 +10,12 @@ public:
     DefaultEspAntenna(const uint8_t peerMac[6], bool isSender);
 
     bool begin();
+
     bool sendByte(uint8_t data);
     bool isAvailable() const;
     uint8_t readByte();
+
+    bool send(const void* data, size_t len);
 
 private:
     bool sender;

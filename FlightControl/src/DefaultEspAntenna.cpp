@@ -11,7 +11,6 @@ DefaultEspAntenna::DefaultEspAntenna(const uint8_t peerMac[6], bool isSender)
 
 bool DefaultEspAntenna::begin() {
     WiFi.mode(WIFI_STA);
-    // Istenirse sabit kanal set edilebilir: esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
 
     if (esp_now_init() != ESP_OK) {
         Serial.println("ESP-NOW init FAILED");

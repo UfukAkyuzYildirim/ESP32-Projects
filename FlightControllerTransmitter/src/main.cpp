@@ -1,46 +1,91 @@
 #include <Arduino.h>
 #include <SPI.h>
-#include "Joystick.h"
-#include "DefaultEspAntenna.h"
+#include <Wire.h>
+#include <ESP32Servo.h>
+#include <esp_now.h>
+#include <WiFi.h>
 
-// Joystick
-#define JOY_X    4 
-#define JOY_Y    5 
-#define JOY_SW   6 
+#define PIN_FR 13 
+#define PIN_FL 16 
+#define PIN_RL 14 
+#define PIN_RR 15 
 
-// ESP-NOW icin karsi tarafin (FlightControl S3) MAC adresi
-// Log: E8:F6:0A:8A:D8:38 (COM14)
-const uint8_t RECEIVER_MAC[6] = {0xE8, 0xF6, 0x0A, 0x8A, 0xD8, 0x38};
+#define MIN_PULSE 1000   
+#define MAX_PULSE 2000   
 
-DefaultEspAntenna espNowAntenna(RECEIVER_MAC, true); // true = gonderici
-Joystick myJoy(JOY_X, JOY_Y, JOY_SW);
+Servo mFR, mFL, mRL, mRR;
+
+typedef struct struct_message {
+  int x;  
+  int y;  
+  int sw; 
+} struct_message;
+
+struct_message myData;
+unsigned long lastRecvTime = 0;
+
+bool isArmed = false;     
+int lastButtonState = 0;   
+
+void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  memcpy(&myData, incomingData, sizeof(myData));
+  lastRecvTime = millis();
+}
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
-  Serial.println("--- KUMANDA (Gonderici - ESP32 S3, ESP-NOW) ---");
+  
+  mFL.attach(PIN_FL, MIN_PULSE, MAX_PULSE);
+  mFR.attach(PIN_FR, MIN_PULSE, MAX_PULSE);
+  mRL.attach(PIN_RL, MIN_PULSE, MAX_PULSE);
+  mRR.attach(PIN_RR, MIN_PULSE, MAX_PULSE);
 
-  myJoy.begin();
+  mFL.writeMicroseconds(MIN_PULSE);
+  mFR.writeMicroseconds(MIN_PULSE);
+  mRL.writeMicroseconds(MIN_PULSE);
+  mRR.writeMicroseconds(MIN_PULSE);
+  
+  delay(2000); 
 
-  if (espNowAntenna.begin()) {
-    Serial.println("✅ ESP-NOW hazir (Gonderici)");
-  } else {
-    Serial.println("❌ ESP-NOW baslamadi");
-    while(1);
-  }
+  WiFi.mode(WIFI_STA);
+  if (esp_now_init() != ESP_OK) return;
+  esp_now_register_recv_cb(OnDataRecv);
+
+  Serial.println("✅ KALIBRASYON MODU HAZIR!");
 }
 
 void loop() {
-  int xDegeri = myJoy.getX();
-  byte dataToSend = map(xDegeri, -1000, 1000, 0, 255);
+  if (millis() - lastRecvTime > 1000) {
+    isArmed = false;
+    mFL.writeMicroseconds(MIN_PULSE);
+    mFR.writeMicroseconds(MIN_PULSE);
+    mRL.writeMicroseconds(MIN_PULSE);
+    mRR.writeMicroseconds(MIN_PULSE);
+    return;
+  }
+
+  if (myData.sw == 1 && lastButtonState == 0) {
+      isArmed = !isArmed;
+      if (isArmed) Serial.println("⚠️ MOTORLAR AKTIF! Dikkatli ol...");
+      else Serial.println("⛔ MOTORLAR KAPANDI");
+  }
+  lastButtonState = myData.sw; 
+
+  int pwmSignal = MIN_PULSE; // Varsayilan 1000
+
+  if (isArmed) {
+      pwmSignal = map(myData.y, 0, 1000, 1000, 1500);
+  }
+
+  mFL.writeMicroseconds(pwmSignal);
+  mFR.writeMicroseconds(pwmSignal);
+  mRL.writeMicroseconds(pwmSignal);
+  mRR.writeMicroseconds(pwmSignal);
+
+  if (isArmed && pwmSignal > 1010) {
+      Serial.print("MOTORA GIDEN PWM SINYALI: ");
+      Serial.println(pwmSignal);
+  }
   
-  Serial.print("Joy: ");
-  Serial.print(xDegeri);
-    Serial.print(" -> Paket: ");
-    Serial.print(dataToSend);
-
-    bool sonuc = espNowAntenna.sendByte(dataToSend);
-    Serial.println(sonuc ? " -> [ILETILDI] ✅" : " -> [BASARISIZ] ❌");
-
-  delay(100);
+  delay(50); 
 }

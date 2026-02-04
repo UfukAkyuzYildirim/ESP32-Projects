@@ -19,9 +19,11 @@ bool DefaultEspAntenna::begin() {
     instance = this;
 
     if (sender) {
-        esp_now_peer_info_t peerInfo{};
+        esp_now_peer_info_t peerInfo = {};
         memcpy(peerInfo.peer_addr, peer, 6);
+        peerInfo.channel = 0;  
         peerInfo.encrypt = false;
+        
         if (esp_now_add_peer(&peerInfo) != ESP_OK) {
             Serial.println("Peer eklenemedi");
             return false;
@@ -30,14 +32,20 @@ bool DefaultEspAntenna::begin() {
         esp_now_register_recv_cb(DefaultEspAntenna::onReceive);
     }
 
-    Serial.print("ESP-NOW Basarili. Bu kartin MAC'i: ");
+    Serial.print("ESP-NOW Basarili. MAC: ");
     Serial.println(WiFi.macAddress());
     return true;
 }
 
+
 bool DefaultEspAntenna::sendByte(uint8_t data) {
+    return send(&data, sizeof(data));
+}
+
+
+bool DefaultEspAntenna::send(const void* data, size_t len) {
     if (!sender) return false;
-    esp_err_t res = esp_now_send(peer, &data, 1);
+    esp_err_t res = esp_now_send(peer, (uint8_t*)data, len);
     return res == ESP_OK;
 }
 
