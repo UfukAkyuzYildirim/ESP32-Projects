@@ -31,3 +31,7 @@ uint8_t ImuSystem::getCalibrationSys() {
     bno.getCalibration(&sys, &gyro, &accel, &mag);
     return sys; 
 }
+
+void ImuSystem::getCalibration(uint8_t &sys, uint8_t &gyro, uint8_t &accel, uint8_t &mag) {
+    bno.getCalibration(&sys, &gyro, &accel, &mag);
+}

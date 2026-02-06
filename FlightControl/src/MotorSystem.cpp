@@ -44,6 +44,11 @@ void MotorSystem::writeAll(int pwm) {
 void MotorSystem::writeMixed(int fl, int fr, int rl, int rr) {
     if (!armed) return;
 
+    fl = constrain(fl, MIN_PULSE, MAX_PULSE);
+    fr = constrain(fr, MIN_PULSE, MAX_PULSE);
+    rl = constrain(rl, MIN_PULSE, MAX_PULSE);
+    rr = constrain(rr, MIN_PULSE, MAX_PULSE);
+
     mFL.writeMicroseconds(fl);
     mFR.writeMicroseconds(fr);
     mRL.writeMicroseconds(rl);

@@ -22,6 +22,7 @@ public:
     
     DroneAngles getAngles();
     uint8_t getCalibrationSys();
+    void getCalibration(uint8_t &sys, uint8_t &gyro, uint8_t &accel, uint8_t &mag);
 };
 
 #endif
