@@ -1,91 +1,67 @@
 #include <Arduino.h>
-#include <SPI.h>
-#include <Wire.h>
-#include <ESP32Servo.h>
-#include <esp_now.h>
-#include <WiFi.h>
+#include <Adafruit_NeoPixel.h>
+#include "Joystick.h"
+#include "DefaultEspAntenna.h"
 
-#define PIN_FR 13 
-#define PIN_FL 16 
-#define PIN_RL 14 
-#define PIN_RR 15 
+// --- PIN AYARLARI ---
+#define PIN_BTN   4
+#define PIN_POT_X 5
+#define PIN_POT_Y 6
 
-#define MIN_PULSE 1000   
-#define MAX_PULSE 2000   
+#define LED_PIN   48
+#define LED_COUNT 1
 
-Servo mFR, mFL, mRL, mRR;
+// --- NESNELER ---
+Joystick joy1(PIN_POT_X, PIN_POT_Y, PIN_BTN);
 
-typedef struct struct_message {
-  int x;  
-  int y;  
-  int sw; 
-} struct_message;
+// Drone Broadcast Adresi
+const uint8_t droneMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+DefaultEspAntenna radio(droneMac, true); // true = Sender
 
-struct_message myData;
-unsigned long lastRecvTime = 0;
+Adafruit_NeoPixel rgb(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
-bool isArmed = false;     
-int lastButtonState = 0;   
+// Paket Yapisi
+typedef struct DronePacket {
+    int x;  // -500..+500
+    int y;  // -500..+500
+    int sw; // 0/1
+} DronePacket;
 
-void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
-  memcpy(&myData, incomingData, sizeof(myData));
-  lastRecvTime = millis();
-}
+DronePacket myData;
 
 void setup() {
-  Serial.begin(115200);
-  
-  mFL.attach(PIN_FL, MIN_PULSE, MAX_PULSE);
-  mFR.attach(PIN_FR, MIN_PULSE, MAX_PULSE);
-  mRL.attach(PIN_RL, MIN_PULSE, MAX_PULSE);
-  mRR.attach(PIN_RR, MIN_PULSE, MAX_PULSE);
+    Serial.begin(115200);
+    
+    joy1.begin();
 
-  mFL.writeMicroseconds(MIN_PULSE);
-  mFR.writeMicroseconds(MIN_PULSE);
-  mRL.writeMicroseconds(MIN_PULSE);
-  mRR.writeMicroseconds(MIN_PULSE);
-  
-  delay(2000); 
+    rgb.begin();
+    rgb.setBrightness(50);
+    rgb.show();
 
-  WiFi.mode(WIFI_STA);
-  if (esp_now_init() != ESP_OK) return;
-  esp_now_register_recv_cb(OnDataRecv);
-
-  Serial.println("✅ KALIBRASYON MODU HAZIR!");
+    if (radio.begin()) {
+        rgb.setPixelColor(0, 0, 0, 255); // Mavi
+        rgb.show();
+    } else {
+        Serial.println("❌ Radyo Hatasi!");
+        rgb.setPixelColor(0, 255, 0, 0); // Kirmizi
+        rgb.show();
+        while(1);
+    }
 }
 
 void loop() {
-  if (millis() - lastRecvTime > 1000) {
-    isArmed = false;
-    mFL.writeMicroseconds(MIN_PULSE);
-    mFR.writeMicroseconds(MIN_PULSE);
-    mRL.writeMicroseconds(MIN_PULSE);
-    mRR.writeMicroseconds(MIN_PULSE);
-    return;
-  }
+    // 1. Verileri Hazirla
+    myData.x = joy1.getX();
+    myData.y = joy1.getY();
+    myData.sw = joy1.isPressed() ? 1 : 0;
 
-  if (myData.sw == 1 && lastButtonState == 0) {
-      isArmed = !isArmed;
-      if (isArmed) Serial.println("⚠️ MOTORLAR AKTIF! Dikkatli ol...");
-      else Serial.println("⛔ MOTORLAR KAPANDI");
-  }
-  lastButtonState = myData.sw; 
+    // 2. Gonder (Hizli - 50Hz)
+    bool success = radio.send(&myData, sizeof(myData));
 
-  int pwmSignal = MIN_PULSE; // Varsayilan 1000
+    // 3. LED Durumu
+    if (success) rgb.setPixelColor(0, 0, 10, 0); // Yesil
+    else rgb.setPixelColor(0, 50, 0, 0);         // Kirmizi
+    rgb.show();
 
-  if (isArmed) {
-      pwmSignal = map(myData.y, 0, 1000, 1000, 1500);
-  }
-
-  mFL.writeMicroseconds(pwmSignal);
-  mFR.writeMicroseconds(pwmSignal);
-  mRL.writeMicroseconds(pwmSignal);
-  mRR.writeMicroseconds(pwmSignal);
-
-  if (isArmed && pwmSignal > 1010) {
-      Serial.print("MOTORA GIDEN PWM SINYALI: ");
-      Serial.println(pwmSignal);
-  }
-  
-  delay(50); 
+    delay(20); // Dongu hizi
 }

@@ -8,12 +8,7 @@ private:
     int pinX;
     int pinY;
     int pinSw;
-
-    int minVal = 0;    
-    int maxVal = 4095; 
-    int centerVal = 1912; 
-    int deadzone = 150;   
-
+    
     int readRaw(int pin);
 
 public:
@@ -23,8 +18,6 @@ public:
     int getX();
     int getY();
     bool isPressed();
-    
-    void printDebug();
 };
 
 #endif
