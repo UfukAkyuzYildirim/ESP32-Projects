@@ -1,63 +1,47 @@
 #include <Arduino.h>
 #include "DroneConfig.h"
 #include "RadioSystem.h"
-#include "MotorSystem.h"        // PWM Motor Sistemi
-#include "PwmFlightController.h"
-#include "DShotMotorSystem.h"   // DShot Motor Sistemi
+#include "DShotMotorSystem.h"   
 #include "DShotFlightController.h"
+#include "ImuSystem.h" 
 
-// --- SETTINGS ---
-#define USE_DSHOT 1  // 1: DShot (Digital), 0: PWM (Analog)
-
-// --- SHARED OBJECTS ---
-// Radio system is shared, single instance.
+// --- OBJECTS ---
 RadioSystem radioSystem;
+DShotMotorSystem dshotMotors;
+ImuSystem droneImu; // Sensor Object
 
-// --- CONTROLLER SELECTION ---
-// Using global pointers for memory management
-DShotMotorSystem* dshotMotors = nullptr;
-DShotFlightController* dshotCtrl = nullptr;
-
-MotorSystem* pwmMotors = nullptr;
-PwmFlightController* pwmCtrl = nullptr;
+// FlightController now requires 3 parameters: Motors, Radio, and SENSOR.
+DShotFlightController dshotCtrl(dshotMotors, radioSystem, droneImu);
 
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    Serial.println("--- DRONE INITIALIZING ---");
+    Serial.println("--- SYSTEM STARTUP (PID FLIGHT MODE) ---");
 
-    if (USE_DSHOT) {
-        Serial.println("Mode: DSHOT300 (Digital)");
-        
-        // Create DShot Objects
-        dshotMotors = new DShotMotorSystem();
-        dshotCtrl = new DShotFlightController(*dshotMotors, radioSystem);
-        
-        if (!dshotCtrl->begin()) {
-            Serial.println("❌ CRITICAL ERROR: DShot Failed!");
-            while (1) { delay(100); }
-        }
-
+    // 1. INITIALIZE SENSOR
+    // Prevent flight if sensor fails
+    Serial.print("IMU (BNO055)... ");
+    if (droneImu.begin()) {
+        Serial.println("OK");
     } else {
-        Serial.println("Mode: PWM (Analog)");
-        
-        // Create PWM Objects
-        pwmMotors = new MotorSystem();
-        pwmCtrl = new PwmFlightController(*pwmMotors, radioSystem);
-
-        if (!pwmCtrl->begin()) {
-            Serial.println("❌ CRITICAL ERROR: PWM Failed!");
-            while (1) { delay(100); }
-        }
+        Serial.println("ERROR (Check wiring: SDA->1, SCL->2)");
+        while(1); // Halt on error
     }
 
-    Serial.println("✅ SYSTEM READY. WAITING FOR TRANSMITTER...");
+    // 2. INITIALIZE FLIGHT CONTROLLER
+    // Internally initializes Radio and DShot Motors
+    Serial.print("Flight Controller... ");
+    if (dshotCtrl.begin()) {
+        Serial.println("OK");
+    } else {
+        Serial.println("ERROR (Radio or Motor failure)");
+        while(1);
+    }
+
+    Serial.println("SYSTEM READY. Arm via controller.");
 }
 
 void loop() {
-    if (USE_DSHOT) {
-        dshotCtrl->loopStep();
-    } else {
-        pwmCtrl->loopStep();
-    }
+    // All logic (Sensor read, PID calc, Motor drive) is handled here.
+    dshotCtrl.loopStep();
 }

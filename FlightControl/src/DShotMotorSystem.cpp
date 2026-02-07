@@ -109,3 +109,20 @@ void DShotMotorSystem::writeAllUs(int microseconds) {
         armed = true;
     }
 }
+
+void DShotMotorSystem::writeMotor(int index, int microseconds) {
+    if (index < 0 || index > 3) return;
+    
+    // Güvenlik sınırları
+    if (microseconds < 1000) microseconds = 1000;
+    if (microseconds > 2000) microseconds = 2000;
+    
+    // Eğer motorlar kilitliyse (Disarm) ve gaz kapalıysa 0 yolla
+    if (!armed && microseconds < 1050) { 
+        sendDshotValue(channels[index], 0);
+        return;
+    }
+    
+    uint16_t val = usToDshot(microseconds);
+    sendDshotValue(channels[index], val);
+}

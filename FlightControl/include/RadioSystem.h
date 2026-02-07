@@ -27,6 +27,9 @@ public:
     bool begin();
     bool isConnectionAlive(); 
     
+    int getX();
+    int getY();
+
     int getLiftSpeed(); 
     int getRollRate(); 
     bool isSwitchOn(); 

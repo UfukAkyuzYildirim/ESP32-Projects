@@ -54,6 +54,16 @@ bool RadioSystem::isSwitchOn() {
     return (currentData.sw == 1);
 }
 
+int RadioSystem::getX() {
+    if (!isConnectionAlive()) return 0;
+    return currentData.x; 
+}
+
+int RadioSystem::getY() {
+    if (!isConnectionAlive()) return 0;
+    return currentData.y; 
+}
+
 // --- ESKİ FONKSİYONLAR (Uyumluluk İçin - İçi Boş veya Yönlendirilmiş) ---
 int RadioSystem::getThrottle() { return map(currentData.y, -500, 500, 0, 1000); } // Kabaca çevirir
 int RadioSystem::getRoll() { return map(currentData.x, -500, 500, 0, 1000); }

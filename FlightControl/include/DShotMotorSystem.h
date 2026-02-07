@@ -11,6 +11,7 @@ public:
     bool begin();
     void disarm();
     void writeAllUs(int microseconds);
+    void writeMotor(int index, int microseconds);
 
 private:
     struct ChannelCfg {
