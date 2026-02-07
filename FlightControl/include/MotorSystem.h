@@ -5,6 +5,8 @@
 #include <ESP32Servo.h>
 #include "DroneConfig.h"
 
+// Legacy PWM motor sürücüsü (klasik analog ESC'ler için korunur).
+
 class MotorSystem {
 private:
     Servo mFR, mFL, mRL, mRR;

@@ -24,7 +24,7 @@
 #define LED_RGB_PIN 48
 #endif
 
-#define CONNECTION_TIMEOUT 1000 
+#define CONNECTION_TIMEOUT 3000 
 #define MAX_TILT_ANGLE 45.0 
 
 #endif

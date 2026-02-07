@@ -1,87 +1,63 @@
 #include <Arduino.h>
-#include <ESP32Servo.h>
-#include "RadioSystem.h"
 #include "DroneConfig.h"
+#include "RadioSystem.h"
+#include "MotorSystem.h"        // PWM Motor Sistemi
+#include "PwmFlightController.h"
+#include "DShotMotorSystem.h"   // DShot Motor Sistemi
+#include "DShotFlightController.h"
 
-// --- SENİN DOĞRU PİNLERİN ---
-#define PIN_FL 4   // Sol Ön
-#define PIN_FR 17  // Sağ Ön
-#define PIN_RL 13  // Sol Arka
-#define PIN_RR 21  // Sağ Arka
+// --- SETTINGS ---
+#define USE_DSHOT 1  // 1: DShot (Digital), 0: PWM (Analog)
 
-Servo motFL, motFR, motRL, motRR;
-RadioSystem radio;
-float currentPwm = 1000.0; 
-unsigned long lastTime = 0;
-unsigned long lastLogTime = 0;
+// --- SHARED OBJECTS ---
+// Radio system is shared, single instance.
+RadioSystem radioSystem;
+
+// --- CONTROLLER SELECTION ---
+// Using global pointers for memory management
+DShotMotorSystem* dshotMotors = nullptr;
+DShotFlightController* dshotCtrl = nullptr;
+
+MotorSystem* pwmMotors = nullptr;
+PwmFlightController* pwmCtrl = nullptr;
 
 void setup() {
     Serial.begin(115200);
-    
-    // 1. Radyoyu Başlat
-    if (!radio.begin()) {
-        Serial.println("❌ Radyo Hatasi!");
-        while(1);
+    delay(1000);
+    Serial.println("--- DRONE INITIALIZING ---");
+
+    if (USE_DSHOT) {
+        Serial.println("Mode: DSHOT300 (Digital)");
+        
+        // Create DShot Objects
+        dshotMotors = new DShotMotorSystem();
+        dshotCtrl = new DShotFlightController(*dshotMotors, radioSystem);
+        
+        if (!dshotCtrl->begin()) {
+            Serial.println("❌ CRITICAL ERROR: DShot Failed!");
+            while (1) { delay(100); }
+        }
+
+    } else {
+        Serial.println("Mode: PWM (Analog)");
+        
+        // Create PWM Objects
+        pwmMotors = new MotorSystem();
+        pwmCtrl = new PwmFlightController(*pwmMotors, radioSystem);
+
+        if (!pwmCtrl->begin()) {
+            Serial.println("❌ CRITICAL ERROR: PWM Failed!");
+            while (1) { delay(100); }
+        }
     }
-    Serial.println("✅ Radyo Hazır.");
 
-    motFL.setPeriodHertz(50);
-    motFR.setPeriodHertz(50);
-    motRL.setPeriodHertz(50);
-    motRR.setPeriodHertz(50);
-
-    motFL.attach(PIN_FL, 1000, 2000);
-    motFR.attach(PIN_FR, 1000, 2000);
-    motRL.attach(PIN_RL, 1000, 2000);
-    motRR.attach(PIN_RR, 1000, 2000);
-    
-    motFL.writeMicroseconds(1000);
-    motFR.writeMicroseconds(1000);
-    motRL.writeMicroseconds(1000);
-    motRR.writeMicroseconds(1000);
-    
-    delay(2000); 
-    Serial.println("✅ Motorlar Hazır. Pili Tak, Switch'i Aç!");
+    Serial.println("✅ SYSTEM READY. WAITING FOR TRANSMITTER...");
 }
 
 void loop() {
-    unsigned long now = millis();
-    float dt = (now - lastTime) / 1000.0;
-    lastTime = now;
-
-    if (!radio.isConnectionAlive() || !radio.isSwitchOn()) {
-        currentPwm = 1000;
-        
-        motFL.writeMicroseconds(1000);
-        motFR.writeMicroseconds(1000);
-        motRL.writeMicroseconds(1000);
-        motRR.writeMicroseconds(1000);
-
-        if (millis() - lastLogTime > 1000) {
-            Serial.println("🔒 DISARMED: Motorlar Kilitli.");
-            lastLogTime = millis();
-        }
-        return;
-    }
-
-    int liftSpeed = radio.getLiftSpeed(); // Joystick'ten gelen veri (-500..+500)
-
-    // Eğer joystick oynuyorsa gazı değiştir
-    if (abs(liftSpeed) > 0) {
-        currentPwm += liftSpeed * 2.5 * dt; 
-    }
-
-    // Sınırlandırma (Şimdilik 1500 ile sınırlayalım)
-    if (currentPwm < 1000) currentPwm = 1000;
-    if (currentPwm > 1500) currentPwm = 1500; 
-
-    motFL.writeMicroseconds((int)currentPwm);
-    motFR.writeMicroseconds((int)currentPwm);
-    motRL.writeMicroseconds((int)currentPwm);
-    motRR.writeMicroseconds((int)currentPwm);
-
-    if (millis() - lastLogTime > 500) {
-        Serial.printf("ARMED! Gaz: %d | Joystick: %d\n", (int)currentPwm, liftSpeed);
-        lastLogTime = millis();
+    if (USE_DSHOT) {
+        dshotCtrl->loopStep();
+    } else {
+        pwmCtrl->loopStep();
     }
 }
