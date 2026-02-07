@@ -6,23 +6,27 @@
 #include "DefaultEspAntenna.h"
 
 // --- AYARLAR ---
-#define PIN_BTN   4
-#define PIN_POT_X 5
-#define PIN_POT_Y 6
+#define PIN_BTN_L  4  // Sol Buton Pin 4
+#define PIN_BTN_R  9  // Sağ Buton Pin 9
+
+#define PIN_POT_LX 5 // Sol Joystick X Pin
+#define PIN_POT_LY 6 // Sol Joystick Y Pin
+
+#define PIN_POT_RX 7 // Sağ Joystick X Pin
+#define PIN_POT_RY 8 // Sağ Joystick Y Pin
 
 #define LED_PIN   48
 #define LED_COUNT 1
 
-// --- NESNELER ---
-Joystick joy1(PIN_POT_X, PIN_POT_Y, PIN_BTN);
+Joystick joy1(PIN_POT_LX, PIN_POT_LY, PIN_POT_RX, PIN_POT_RY, PIN_BTN_L, PIN_BTN_R);
 
 uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 DefaultEspAntenna radio(broadcastAddress, true); 
 Adafruit_NeoPixel rgb(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 typedef struct DronePacket {
-    int x;  
-    int y;  
+    int lx; int ly;
+    int rx; int ry;
     int sw; 
 } DronePacket;
 
@@ -30,86 +34,39 @@ DronePacket myData;
 
 void setup() {
     Serial.begin(115200);
-    
-    // 1. Donanımları Başlat
     joy1.begin();
-    rgb.begin();
-    rgb.setBrightness(50);
-    rgb.show(); // Sönük başla
+    rgb.begin(); rgb.setBrightness(50); rgb.show(); 
 
-    // -----------------------------------------------------------
-    // 2. KRİTİK DEĞİŞİKLİK: ÖNCE RADYOYU AÇIYORUZ
-    // WiFi açılınca voltaj düşer, ADC değerleri değişir.
-    // Kalibrasyonu bu düşüşten SONRA yapmalıyız.
-    // -----------------------------------------------------------
-    Serial.println("Radyo (WiFi) Baslatiliyor...");
-    if (radio.begin()) {
-        Serial.println("✅ ESP-NOW Basarili.");
-    } else {
-        Serial.println("❌ Radyo Hatasi!");
-        rgb.setPixelColor(0, 255, 0, 0); // Kırmızı
-        rgb.show();
-        while(1);
-    }
-
-    // Voltajın oturması için biraz bekle (Safety Delay)
+    Serial.println("Radyo Baslatiliyor...");
+    if (radio.begin()) Serial.println("✅ OK");
+    else { Serial.println("❌ FAIL"); while(1); }
     delay(500);
 
-    // -----------------------------------------------------------
-    // 3. ŞİMDİ KALİBRASYON (Voltaj oturmuş halde)
-    // -----------------------------------------------------------
-    Serial.println("Kalibrasyon Başlıyor... Kollara Dokunma!");
-    rgb.setPixelColor(0, 255, 0, 0); // KIRMIZI (Dokunma!)
-    rgb.show();
-    
-    // 10 Saniyelik Tarama
+    Serial.println("Kalibrasyon (3 Sn)... DOKUNMA!");
+    rgb.setPixelColor(0, 255, 0, 0); rgb.show();
     joy1.calibrate();
 
-    // -----------------------------------------------------------
-    // 4. BAŞARI ANİMASYONU
-    // -----------------------------------------------------------
-    for(int i=0; i<3; i++) {
-        rgb.setPixelColor(0, 0, 255, 0); // YEŞİL
-        rgb.show();
-        delay(200);
-        rgb.setPixelColor(0, 0, 0, 0);   // SÖNÜK
-        rgb.show();
-        delay(200);
-    }
-
-    // -----------------------------------------------------------
-    // 5. HAZIR (YEŞİL SABİT)
-    // -----------------------------------------------------------
-    rgb.setPixelColor(0, 0, 255, 0); // YEŞİL SABİT
-    rgb.show();
-
-    Serial.println("--- KUMANDA HAZIR (VOLTAJ STABIL) ---");
+    rgb.setPixelColor(0, 0, 255, 0); rgb.show();
+    Serial.println("--- KUMANDA HAZIR ---");
 }
 
 void loop() {
-    myData.x = joy1.getX();
-    myData.y = joy1.getY();
+    myData.lx = joy1.getLX();
+    myData.ly = joy1.getLY();
+    myData.rx = joy1.getRX();
+    myData.ry = joy1.getRY();
     myData.sw = joy1.getToggleState() ? 1 : 0;
 
-    esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
+    esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
 
-    // LED Durumu (Loop içinde)
-    if (result == ESP_OK) {
-        if (myData.sw == 1) {
-            rgb.setPixelColor(0, 50, 0, 0); // ARM: Kırmızı
-        } else {
-            rgb.setPixelColor(0, 0, 10, 0); // DISARM: Yeşil
-        }
-    } else {
-        rgb.setPixelColor(0, 0, 0, 0); 
-    }
+    if(myData.sw) rgb.setPixelColor(0, 50, 0, 0);
+    else rgb.setPixelColor(0, 0, 10, 0);
     rgb.show();
 
-    static unsigned long lastPrint = 0;
-    if (millis() - lastPrint > 200) {
-        lastPrint = millis();
+    static unsigned long t = 0;
+    if (millis() - t > 200) {
+        t = millis();
         joy1.printDebug();
     }
-    
     delay(4); 
 }

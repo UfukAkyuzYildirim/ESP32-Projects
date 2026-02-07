@@ -5,33 +5,36 @@
 
 class Joystick {
 private:
-    int pinX;
-    int pinY;
-    int pinSw;
+    int pinLX, pinLY; 
+    int pinRX, pinRY; 
+    int pinSwL, pinSwR;
 
     bool isArmed;           
     int lastButtonState;    
     unsigned long lastDebounceTime; 
 
-    // Kalibrasyon Sınırları
-    int xMinDead, xMaxDead;
-    int yMinDead, yMaxDead;
+    // Deadzone
+    int lxMinDead, lxMaxDead;
+    int lyMinDead, lyMaxDead;
+    int rxMinDead, rxMaxDead;
+    int ryMinDead, ryMaxDead;
 
-    // --- YENİ: FİLTRE İÇİN HAFIZA ---
-    int historyX[3]; // X için son 3 değer
-    int historyY[3]; // Y için son 3 değer
-    int historyIndex; // Hangi sıradayız?
+    // MedianFilter history
+    int historyLX[3]; int historyLY[3];
+    int historyRX[3]; int historyRY[3];
 
     int readRaw(int pin);
-    int getFilteredRaw(int pin, int* history); // Yeni Filtre Fonksiyonu
+    int getFilteredRaw(int pin, int* history); 
 
 public:
-    Joystick(int x, int y, int sw);
+    Joystick(int lx, int ly, int rx, int ry, int swL, int swR);
+    
     void begin();
     void calibrate();
 
-    int getX();
-    int getY();
+    int getLX(); int getLY(); 
+    int getRX(); int getRY();
+    
     bool getToggleState(); 
     void printDebug();
 };

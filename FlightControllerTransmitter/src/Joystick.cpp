@@ -1,169 +1,123 @@
 #include "Joystick.h"
 
-// Fiziksel sınırlar
-#define X_MIN_VAL 250   
-#define X_MAX_VAL 3800  
-#define Y_MIN_VAL 200   
-#define Y_MAX_VAL 3700  
+// ADC border
+#define MIN_RAW 0
+#define MAX_RAW 4095
 
-// Yardımcı Map Fonksiyonu
-int mapSmart(int val, int minDead, int maxDead, int minVal, int maxVal) {
-    // 1. ÖLÜ BÖLGE
-    if (val >= minDead && val <= maxDead) return 0;
+// Output border (-500 / +500)
+#define OUT_MIN -500
+#define OUT_MAX 500
+
+int mapSmart(int val, int minDead, int maxDead) {
+    if (val >= minDead && val <= maxDead) return 0; // deadzone
     
-    // 2. NEGATİF BÖLGE (Sol / Aşağı)
     if (val < minDead) {
-        if (val < minVal) val = minVal;
-        return map(val, minVal, minDead, -500, 0);
-    } 
-    // 3. POZİTİF BÖLGE (Sağ / Yukarı)
-    else {
-        if (val > maxVal) val = maxVal;
-        return map(val, maxDead, maxVal, 0, 500);
+        return map(val, MIN_RAW, minDead, OUT_MIN, 0);
+    } else {
+        return map(val, maxDead, MAX_RAW, 0, OUT_MAX);
     }
 }
 
-Joystick::Joystick(int x, int y, int sw) {
-    this->pinX = x;
-    this->pinY = y;
-    this->pinSw = sw;
+Joystick::Joystick(int lx, int ly, int rx, int ry, int swL, int swR) {
+    this->pinLX = lx; this->pinLY = ly;
+    this->pinRX = rx; this->pinRY = ry;
+    this->pinSwL = swL; this->pinSwR = swR;
     
     this->isArmed = false;
     this->lastButtonState = HIGH; 
     this->lastDebounceTime = 0;
 
     // Varsayılan Deadzone
-    this->xMinDead = 1750; this->xMaxDead = 1920;
-    this->yMinDead = 1600; this->yMaxDead = 1760;
+    lxMinDead=1800; lxMaxDead=2200;
+    lyMinDead=1800; lyMaxDead=2200;
+    rxMinDead=1800; rxMaxDead=2200;
+    ryMinDead=1800; ryMaxDead=2200;
 
-    // Filtreyi sıfırla
     for(int i=0; i<3; i++) {
-        historyX[i] = 0;
-        historyY[i] = 0;
+        historyLX[i]=0; historyLY[i]=0;
+        historyRX[i]=0; historyRY[i]=0;
     }
-    historyIndex = 0;
 }
 
 void Joystick::begin() {
-    pinMode(pinX, INPUT);
-    pinMode(pinY, INPUT);
-    pinMode(pinSw, INPUT_PULLUP);
-}
-
-// FİLTRE FONKSİYONU
-int Joystick::getFilteredRaw(int pin, int* history) {
-    int newVal = readRaw(pin);
-
-    // Kaydırma
-    history[0] = history[1];
-    history[1] = history[2];
-    history[2] = newVal;
-
-    // Sıralama (Median Bulma)
-    int temp[3] = {history[0], history[1], history[2]};
-    if (temp[0] > temp[1]) { int t=temp[0]; temp[0]=temp[1]; temp[1]=t; }
-    if (temp[1] > temp[2]) { int t=temp[1]; temp[1]=temp[2]; temp[2]=t; }
-    if (temp[0] > temp[1]) { int t=temp[0]; temp[0]=temp[1]; temp[1]=t; }
-
-    return temp[1];
-}
-
-void Joystick::calibrate() {
-    // 1. ISINMA ve FİLTRE DOLDURMA (KRİTİK BÖLÜM!)
-    // Hafızadaki o {0,0,0} değerleri gitsin diye 20 kere boşa okuyoruz.
-    // Böylece min/max hesaplarken 0'ı görüp yanılmayacak.
-    for(int k=0; k<20; k++) {
-         getFilteredRaw(pinX, historyX);
-         getFilteredRaw(pinY, historyY);
-         delay(10);
-    }
-    
-    Serial.println("--- 10 Saniyelik Kalibrasyon ---");
-    
-    // Değişkenleri şimdi sıfırlıyoruz (Filtre dolduktan sonra)
-    int readMinX = 5000; int readMaxX = 0;
-    int readMinY = 5000; int readMaxY = 0;
-    int samples = 1000; 
-
-    for(int i=0; i<samples; i++) {
-        int valX = getFilteredRaw(pinX, historyX);
-        int valY = getFilteredRaw(pinY, historyY);
-
-        if (valX < readMinX) readMinX = valX;
-        if (valY < readMinY) readMinY = valY;
-        if (valX > readMaxX) readMaxX = valX;
-        if (valY > readMaxY) readMaxY = valY;
-
-        if (i % 100 == 0) Serial.printf("Kalibrasyon... %d%%\n", i/10);
-        delay(10); 
-    }
-
-    int k = 60; 
-
-    this->xMinDead = readMinX - k;
-    this->xMaxDead = readMaxX + k;
-    this->yMinDead = readMinY - k;
-    this->yMaxDead = readMaxY + k;
-
-    Serial.println("--- TAMAMLANDI ---");
-    Serial.printf("X: [%d - %d] -> DZ: [%d - %d]\n", readMinX, readMaxX, xMinDead, xMaxDead);
-    Serial.printf("Y: [%d - %d] -> DZ: [%d - %d]\n", readMinY, readMaxY, yMinDead, yMaxDead);
+    pinMode(pinLX, INPUT); pinMode(pinLY, INPUT);
+    pinMode(pinRX, INPUT); pinMode(pinRY, INPUT);
+    pinMode(pinSwL, INPUT_PULLUP);
+    pinMode(pinSwR, INPUT_PULLUP);
 }
 
 int Joystick::readRaw(int pin) {
-    long toplam = 0;
-    for (int i = 0; i < 5; i++) { 
-        toplam += analogRead(pin);
-        delayMicroseconds(10); 
+    long t = 0;
+    for (int i = 0; i < 5; i++) { t += analogRead(pin); delayMicroseconds(10); }
+    return (int)(t / 5);
+}
+
+int Joystick::getFilteredRaw(int pin, int* history) {
+    int val = readRaw(pin);
+    history[0] = history[1]; history[1] = history[2]; history[2] = val;
+    int tmp[3] = {history[0], history[1], history[2]};
+    if (tmp[0]>tmp[1]) { int t=tmp[0]; tmp[0]=tmp[1]; tmp[1]=t; }
+    if (tmp[1]>tmp[2]) { int t=tmp[1]; tmp[1]=tmp[2]; tmp[2]=t; }
+    if (tmp[0]>tmp[1]) { int t=tmp[0]; tmp[0]=tmp[1]; tmp[1]=t; }
+    return tmp[1];
+}
+
+void Joystick::calibrate() {
+    for(int k=0; k<20; k++) {
+         getFilteredRaw(pinLX, historyLX); getFilteredRaw(pinLY, historyLY);
+         getFilteredRaw(pinRX, historyRX); getFilteredRaw(pinRY, historyRY);
+         delay(10);
     }
-    return (int)(toplam / 5);
+    
+    Serial.println("--- KALIBRASYON (3 Sn) ---");
+    int minLX=5000, maxLX=0; int minLY=5000, maxLY=0;
+    int minRX=5000, maxRX=0; int minRY=5000, maxRY=0;
+
+    for(int i=0; i<300; i++) {
+        int vLX = getFilteredRaw(pinLX, historyLX);
+        int vLY = getFilteredRaw(pinLY, historyLY);
+        int vRX = getFilteredRaw(pinRX, historyRX);
+        int vRY = getFilteredRaw(pinRY, historyRY);
+
+        if(vLX<minLX) minLX=vLX; if(vLX>maxLX) maxLX=vLX;
+        if(vLY<minLY) minLY=vLY; if(vLY>maxLY) maxLY=vLY;
+        if(vRX<minRX) minRX=vRX; if(vRX>maxRX) maxRX=vRX;
+        if(vRY<minRY) minRY=vRY; if(vRY>maxRY) maxRY=vRY;
+        if(i%30==0) Serial.print(".");
+        delay(10); 
+    }
+    Serial.println("\n--- BITTI ---");
+
+    int k = 60; 
+    lxMinDead = minLX-k; lxMaxDead = maxLX+k;
+    lyMinDead = minLY-k; lyMaxDead = maxLY+k;
+    rxMinDead = minRX-k; rxMaxDead = maxRX+k;
+    ryMinDead = minRY-k; ryMaxDead = maxRY+k;
 }
 
-int Joystick::getX() {
-    int rawFiltered = getFilteredRaw(pinX, historyX);
-    return mapSmart(rawFiltered, xMinDead, xMaxDead, X_MIN_VAL, X_MAX_VAL);
-}
-
-int Joystick::getY() {
-    int rawFiltered = getFilteredRaw(pinY, historyY);
-    return mapSmart(rawFiltered, yMinDead, yMaxDead, Y_MIN_VAL, Y_MAX_VAL);
-}
+int Joystick::getLX() { return mapSmart(getFilteredRaw(pinLX, historyLX), lxMinDead, lxMaxDead); }
+int Joystick::getLY() { return mapSmart(getFilteredRaw(pinLY, historyLY), lyMinDead, lyMaxDead); }
+int Joystick::getRX() { return mapSmart(getFilteredRaw(pinRX, historyRX), rxMinDead, rxMaxDead); }
+int Joystick::getRY() { return mapSmart(getFilteredRaw(pinRY, historyRY), ryMinDead, ryMaxDead); }
 
 bool Joystick::getToggleState() {
-    int reading = digitalRead(pinSw);
-    if (reading != lastButtonState) {
-        lastDebounceTime = millis();
-    }
+    int sL = digitalRead(pinSwL);
+    int sR = digitalRead(pinSwR);
+    int state = (sL == LOW && sR == LOW) ? LOW : HIGH;
+
+    if (state != lastButtonState) lastDebounceTime = millis();
     if ((millis() - lastDebounceTime) > 50) {
-        static int currentStableState = HIGH;
-        if (reading != currentStableState) {
-            currentStableState = reading;
-            if (currentStableState == LOW) {
-                isArmed = !isArmed;
-            }
+        static int stable = HIGH;
+        if (state != stable) {
+            stable = state;
+            if (stable == LOW) isArmed = !isArmed;
         }
     }
-    lastButtonState = reading;
+    lastButtonState = state;
     return isArmed;
 }
 
 void Joystick::printDebug() {
-    // Loglama için manuel medyan hesabı (getX çağırmadan)
-    int tempX[3] = {historyX[0], historyX[1], historyX[2]};
-    if (tempX[0] > tempX[1]) { int t=tempX[0]; tempX[0]=tempX[1]; tempX[1]=t; }
-    if (tempX[1] > tempX[2]) { int t=tempX[1]; tempX[1]=tempX[2]; tempX[2]=t; }
-    if (tempX[0] > tempX[1]) { int t=tempX[0]; tempX[0]=tempX[1]; tempX[1]=t; }
-    int medianX = tempX[1];
-
-    int tempY[3] = {historyY[0], historyY[1], historyY[2]};
-    if (tempY[0] > tempY[1]) { int t=tempY[0]; tempY[0]=tempY[1]; tempY[1]=t; }
-    if (tempY[1] > tempY[2]) { int t=tempY[1]; tempY[1]=tempY[2]; tempY[2]=t; }
-    if (tempY[0] > tempY[1]) { int t=tempY[0]; tempY[0]=tempY[1]; tempY[1]=t; }
-    int medianY = tempY[1];
-
-    int outX = mapSmart(medianX, xMinDead, xMaxDead, X_MIN_VAL, X_MAX_VAL);
-    int outY = mapSmart(medianY, yMinDead, yMaxDead, Y_MIN_VAL, Y_MAX_VAL);
-
-    Serial.printf("X [Raw: %d -> Out: %d] | Y [Raw: %d -> Out: %d] | ARM: %d\n", 
-                  medianX, outX, medianY, outY, isArmed);
+    Serial.printf("SOL[X:%d Y:%d] | SAG[X:%d Y:%d] | ARM: %d\n", 
+                  getLX(), getLY(), getRX(), getRY(), isArmed);
 }
