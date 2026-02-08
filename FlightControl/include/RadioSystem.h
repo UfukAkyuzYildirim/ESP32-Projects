@@ -6,11 +6,13 @@
 #include <WiFi.h>
 #include "DroneConfig.h"
 
-// --- YENİ PAKET YAPISI (Kumanda ile Birebir Aynı) ---
+// Kumanda paketi (5 alan)
 typedef struct DronePacket {
-    int x;  // Roll: -500 (Sol) ... 0 ... +500 (Sağ)
-    int y;  // Lift: -500 (İn) ... 0 (Sabit) ... +500 (Çık)
-    int sw; // Switch: 0 veya 1
+    int lx; // Sol X  (-500..500)
+    int ly; // Sol Y  (-500..500)
+    int rx; // Sağ X  (-500..500)
+    int ry; // Sağ Y  (-500..500)
+    int sw; // Arm toggle (0/1)
 } DronePacket;
 
 class RadioSystem {
@@ -27,8 +29,13 @@ public:
     bool begin();
     bool isConnectionAlive(); 
     
-    int getX();
-    int getY();
+    int getLX();
+    int getLY();
+    int getRX();
+    int getRY();
+
+    int getX(); // backward compat: roll uses RX
+    int getY(); // backward compat: lift uses LY
 
     int getLiftSpeed(); 
     int getRollRate(); 
