@@ -95,10 +95,21 @@ void Joystick::calibrate() {
     ryMinDead = minRY-k; ryMaxDead = maxRY+k;
 }
 
-int Joystick::getLX() { return mapSmart(getFilteredRaw(pinLX, historyLX), lxMinDead, lxMaxDead); }
-int Joystick::getLY() { return mapSmart(getFilteredRaw(pinLY, historyLY), lyMinDead, lyMaxDead); }
-int Joystick::getRX() { return mapSmart(getFilteredRaw(pinRX, historyRX), rxMinDead, rxMaxDead); }
-int Joystick::getRY() { return mapSmart(getFilteredRaw(pinRY, historyRY), ryMinDead, ryMaxDead); }
+int Joystick::getLX() { 
+    return -mapSmart(getFilteredRaw(pinLX, historyLX), lxMinDead, lxMaxDead); 
+}
+
+int Joystick::getLY() { 
+    return -mapSmart(getFilteredRaw(pinLY, historyLY), lyMinDead, lyMaxDead); 
+}
+
+int Joystick::getRX() { 
+    return -mapSmart(getFilteredRaw(pinRX, historyRX), rxMinDead, rxMaxDead); 
+}
+
+int Joystick::getRY() { 
+    return mapSmart(getFilteredRaw(pinRY, historyRY), ryMinDead, ryMaxDead); 
+}
 
 bool Joystick::getToggleState() {
     int sL = digitalRead(pinSwL);
