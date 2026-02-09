@@ -1,16 +1,26 @@
 #include "DShotFlightController.h"
 
-// --- PID AYARLARI ---
-#define PR_P  1.0   // Pitch and Roll P multipliers ( smaller count is more smooth but less responsive)
-#define PR_I  0.02   // I impact (can be used to reduce steady-state error, but may cause instability if too high)
-#define PR_D  12.0   // D impact (helps reduce overshoot and improve stability, but can cause noise if too high)
+// --- PID AYARLARI (REVIZE 3: SIKI DURUŞ + DRIFT KATİLİ) ---
 
-#define YAW_P 2.5   
-#define YAW_I 0.0
-#define YAW_D 0.0
+// PITCH & ROLL (Gövde sertleşsin diye P artırıyoruz)
+#define PR_P  1.7   // 1.0 idi -> 1.7 yaptık (Artık eline direnç gösterecek)
+#define PR_I  0.01  // 0.0 idi -> 0.01 yaptık (Çok az hafıza ekledik ki açıyı tutsun)
+#define PR_D  6.0   // 3.0 idi -> 6.0 yaptık (P artınca freni de artırdık titremesin diye)
+
+// YAW (Drifti yok etmek için I değerini yükseltiyoruz)
+#define YAW_P 4.0   // Burası iyi, kalsın.
+#define YAW_I 0.40  // 0.15 idi -> 0.40 yaptık (Bu drifti affetmez, kafayı kilitler)
+#define YAW_D 0.0   
 
 #define MAX_I 50.0       
-#define PID_MAX_OUT 300.0 
+#define PID_MAX_OUT 300.0
+
+// --- MANUEL TRIM AYARLARI (MEKANİK MONTAJ HATASI İÇİN) ---
+// Bu değerler ile oynayarak dronun sürekli kaymasını engelleyeceğiz.
+// Dron sürekli ÖNE gidiyorsa -> PITCH_TRIM'i artır (+2.0 gibi)
+// Dron sürekli ARKAYA gidiyorsa -> PITCH_TRIM'i azalt (-2.0 gibi)
+float MANUAL_PITCH_TRIM = 0.0; 
+float MANUAL_ROLL_TRIM  = 0.0;
 
 DShotFlightController::DShotFlightController(DShotMotorSystem &motorsRef, RadioSystem &radioRef, ImuSystem &imuRef)
     : motors(motorsRef), radio(radioRef), imu(imuRef),
@@ -24,132 +34,123 @@ bool DShotFlightController::begin() {
     if (!radio.begin()) return false;
     if (!motors.begin()) return false;
     
-    // Motorları güvenli başlat (0 gönder)
+    // Motorları güvenli başlat
     motors.writeAllUs(0); 
     delay(500);
 
-    // IMU Kalibrasyonu
+    // IMU Hazırlığı (Absolute Mod)
     calibrateIMU(); 
 
     return true;
 }
 
-// IMU KALİBRASYON
 void DShotFlightController::calibrateIMU() {
-    Serial.println("--- IMU KALIBRASYON (KIPIRDATMA!) ---");
-    float pSum = 0;
-    float rSum = 0;
+    Serial.println("--- SENSOR HAZIRLANIYOR (MUTLAK MOD) ---");
+    // Sensörün kendine gelmesi için bekle
+    delay(1000);
     
-    for(int i=0; i<200; i++) {
-        DroneAngles ang = imu.getAngles();
-        pSum += ang.pitch;
-        rSum += ang.roll;
-        delay(3);
-    }
+    // ARTIK HESAPLAMA YOK! 
+    // Sensör zaten yerçekimini biliyor. 
+    // Sadece senin montaj hatan varsa (Trim) onu ekliyoruz.
+    pitchOffset = MANUAL_PITCH_TRIM;
+    rollOffset  = MANUAL_ROLL_TRIM;
     
-    pitchOffset = pSum / 200.0;
-    rollOffset = rSum / 200.0;
-    
-    Serial.printf("Kalibrasyon Bitti -> P_Offset: %.2f | R_Offset: %.2f\n", pitchOffset, rollOffset);
+    Serial.printf("Hazir. Trimler -> P: %.2f | R: %.2f\n", pitchOffset, rollOffset);
 }
 
 void DShotFlightController::loopStep() {
     unsigned long now = millis();
     float dt = (now - lastTime) / 1000.0f;
-    
     if (dt > 0.1) dt = 0.01;
     lastTime = now;
 
-    // --- 1. GÜVENLİK KONTROLLERİ ---
-    if (!radio.isConnectionAlive()) {
+    // --- 1. GÜVENLİK ---
+    if (!radio.isConnectionAlive() || !radio.isSwitchOn()) {
         motors.disarm(); 
-        currentThrottle = 1000;
-        pidPitch.reset(); pidRoll.reset(); pidYaw.reset();
-        return;
-    }
-
-    if (!radio.isSwitchOn()) {
-        motors.disarm();
         currentThrottle = 1000;
         pidPitch.reset(); pidRoll.reset(); pidYaw.reset();
         
         if (now - lastLogTime > 500) {
-           Serial.println("--- BEKLEMEDE (ARM ICIN SWITCH AC) ---");
+           Serial.println("--- BEKLEMEDE ---");
            lastLogTime = now;
         }
         return;
     }
 
-    // --- 2. KUMANDA OKUMA ---
+    // --- 2. KUMANDA ---
     int rawThrottle = radio.getLY(); 
     int rawYaw      = radio.getLX(); 
     int rawPitch    = radio.getRY(); 
     int rawRoll     = radio.getRX(); 
 
-    // --- 3. GAZ (THROTTLE) AYARI ---
+    // --- 3. GAZ ---
     if (abs(rawThrottle) > 50) { 
         float degisim = rawThrottle * 0.8f * dt; 
         currentThrottle += degisim;
     }
-
     if (currentThrottle < 1050) currentThrottle = 1050; 
     if (currentThrottle > 1800) currentThrottle = 1800; 
 
-    // --- 4. HEDEF AÇILAR ---
-    float targetPitch = map(rawPitch, -500, 500, -30, 30);
+    // --- 4. HEDEF AÇILAR (MANEVRA YÖNÜ DÜZELTME) ---
+    
+    // 🔥 PITCH DÜZELTME: İleri itince Geri gidiyordu.
+    // Eski: map(..., -30, 30) -> YENİ: map(..., 30, -30)
+    // Artık ileri itince (pozitif raw) negatif açı (ileri) isteyecek.
+    float targetPitch = map(rawPitch, -500, 500, 30, -30);
+    
+    // ROLL: Şikayet gelmediği için dokunmadım (-30, 30 standart)
     float targetRoll  = map(rawRoll,  -500, 500, -30, 30);
     
-    // --- 5. SENSÖR OKUMA ---
+    // --- 5. SENSÖR (MUTLAK) ---
     DroneAngles angles = imu.getAngles();
     float actualPitch = angles.pitch - pitchOffset;
     float actualRoll  = angles.roll - rollOffset;
-    
-    // Yaw Kontrolü (Basit P etkisi)
-    float yawPid = rawYaw * 0.3; 
 
-    // --- 6. PID HESAPLAMA ---
+    // --- YAW KONTROLÜ (GYRO İLE) ---
+    
+    // 🔥 YAW DÜZELTME: Sola itince Sağa dönüyordu.
+    // Eski: map(..., -150, 150) -> YENİ: map(..., 150, -150)
+    float targetYawRate = map(rawYaw, -500, 500, 150, -150);
+    
+    DroneAngles rates = imu.getRate(); 
+    float actualYawRate = rates.yaw; 
+
+    float yawPid = pidYaw.compute(targetYawRate, actualYawRate, dt);
+    yawPid = constrain(yawPid, -PID_MAX_OUT, PID_MAX_OUT);
+
+    // --- PID ---
     float pitchPid = pidPitch.compute(targetPitch, actualPitch, dt);
     float rollPid  = pidRoll.compute(targetRoll,  actualRoll,  dt);
     
     pitchPid = constrain(pitchPid, -PID_MAX_OUT, PID_MAX_OUT);
     rollPid  = constrain(rollPid,  -PID_MAX_OUT, PID_MAX_OUT);
 
-    // --- 7. MOTORLARA GÖNDER ---
+    // --- KARIŞTIRMA ---
     mixMotors(currentThrottle, pitchPid, rollPid, yawPid);
 
-    // --- 8. LOGLAMA ---
+    // --- LOG ---
     if (now - lastLogTime > 200) {
-        Serial.printf("THR:%.0f | P_Tgt:%.1f P_Act:%.1f | R_Tgt:%.1f R_Act:%.1f\n", 
-            currentThrottle, targetPitch, actualPitch, targetRoll, actualRoll);
+        Serial.printf("THR:%.0f | P:%.1f | R:%.1f | Y_Rate:%.1f\n", 
+            currentThrottle, actualPitch, actualRoll, actualYawRate);
         lastLogTime = now;
     }
 }
 
-// 🔥 DÜZELTİLMİŞ MOTOR KARIŞIMI (VERSION 3) 🔥
-// Durum:
-// 1. Roll (Sağ/Sol) düzelmişti (Önceki adımda yaptık).
-// 2. Pitch (İleri/Geri) ters çalışıyor dedin (Arkaya eğince arkadakiler duruyor).
-// ÇÖZÜM: Pitch işaretlerini TERSİNE çeviriyoruz.
-
+// 🔥 KARIŞIM MANTIĞI (PITCH TERSLENMİŞ - CORRECT) 🔥
 void DShotFlightController::mixMotors(float throttle, float pitchPid, float rollPid, float yawPid) {
     
-    // YENİ İŞARETLER:
-    // PITCH: Önceden Önler (+) Arkalar (-) idi. ŞİMDİ TAM TERSİ.
-    // ROLL:  Önceki ayarda bıraktık (Çünkü o düzelmişti sanırım).
-
-    // FL (Ön Sol) -> Ön olduğu için Pitch ÇIKARILACAK (-)
+    // FL (Ön Sol) 
     float fl = throttle - pitchPid - rollPid + yawPid; 
     
-    // FR (Ön Sağ) -> Ön olduğu için Pitch ÇIKARILACAK (-)
+    // FR (Ön Sağ) 
     float fr = throttle - pitchPid + rollPid - yawPid;
     
-    // RL (Arka Sol)-> Arka olduğu için Pitch EKLENECEK (+)
+    // RL (Arka Sol)
     float rl = throttle + pitchPid - rollPid - yawPid;
     
-    // RR (Arka Sağ)-> Arka olduğu için Pitch EKLENECEK (+)
+    // RR (Arka Sağ)
     float rr = throttle + pitchPid + rollPid + yawPid;
 
-    // Motorlara Yaz
     motors.writeMotor(0, (int)fl);
     motors.writeMotor(1, (int)fr);
     motors.writeMotor(2, (int)rl);
