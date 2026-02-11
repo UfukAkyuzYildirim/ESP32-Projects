@@ -6,8 +6,8 @@
 #define PIN_FL 4
 #define PIN_FR 17
 #define PIN_RL 13
-
 #define PIN_RR 21
+
 #define MIN_PULSE 1000
 #define MAX_PULSE 2000
 
