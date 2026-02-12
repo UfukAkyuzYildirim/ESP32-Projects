@@ -19,7 +19,7 @@ DroneAngles ImuSystem::getAngles() {
     bno.getEvent(&event);
     
     DroneAngles angles;
-    angles.pitch = event.orientation.y; 
+    angles.pitch = -event.orientation.y; // TERS CEVRILDI (Burun yukari + olsun diye)
     angles.roll  = -event.orientation.z; 
     angles.yaw   = event.orientation.x;
 
@@ -45,7 +45,7 @@ DroneAngles ImuSystem::getRate() {
     DroneAngles rates;
     
     // getAngles() ile AYNI EKSENLERI kullaniyoruz:
-    rates.pitch = gyro.y();  // Pitch icin Y
+    rates.pitch = -gyro.y(); // Pitch icin -Y (Acida oldugu gibi ters cevirdik)
     rates.roll  = -gyro.z(); // Roll icin -Z (Aci fonksiyonundaki gibi ters cevirdik)
     rates.yaw   = gyro.x();  // Yaw icin X
     
