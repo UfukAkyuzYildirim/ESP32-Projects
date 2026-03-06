@@ -97,7 +97,7 @@ void DShotFlightController::loopStep() {
 
     // --- KARIŞTIRMA ---
     // Gaz rölantideyse (1100 altı) PID karışmasın, yerde sekmesin.
-    if (currentThrottle < 1100) {
+    if (currentThrottle < 1000) {
         pitchPid = 0; rollPid = 0; yawPid = 0;
     }
 
@@ -111,10 +111,15 @@ void DShotFlightController::loopStep() {
 }
 
 void DShotFlightController::mixMotors(float throttle, float pitchPid, float rollPid, float yawPid) {
-    float fl = throttle - pitchPid - rollPid + yawPid; 
-    float fr = throttle - pitchPid + rollPid - yawPid;
-    float rl = throttle + pitchPid - rollPid - yawPid;
-    float rr = throttle + pitchPid + rollPid + yawPid;
+    // DUZELTME: YONLER TERSE CEVRILDI (EMPIRIK DUZELTME)
+    
+    float fl = throttle - pitchPid + rollPid + yawPid; 
+    float fr = throttle - pitchPid - rollPid - yawPid;
+    float rl = throttle + pitchPid + rollPid - yawPid;
+    float rr = throttle + pitchPid - rollPid + yawPid;
+
+    // Loglama icin kaydet
+    motorFL = fl; motorFR = fr; motorRL = rl; motorRR = rr;
 
     motors.writeMotor(0, (int)fl);
     motors.writeMotor(1, (int)fr);

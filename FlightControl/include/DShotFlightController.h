@@ -16,6 +16,9 @@ public:
     
     void calibrateIMU(); // Calibrate IMU
 
+    // Motor Degerlerini Log icin Disari Acma
+    float motorFL, motorFR, motorRL, motorRR;
+
 private:
     DShotMotorSystem &motors;
     RadioSystem &radio;
