@@ -15,6 +15,9 @@ public:
     void loopStep();
     
     void calibrateIMU(); // Calibrate IMU
+    
+    // YENI FONKSIYON: Sifir noktasina gore donus acisini verir (-180..+180)
+    float getRelativeYaw(); // Getter for easy logging
 
     // Motor Degerlerini Log icin Disari Acma
     float motorFL, motorFR, motorRL, motorRR;
@@ -34,6 +37,11 @@ private:
     
     float pitchOffset; // Pitch offset
     float rollOffset;  // Roll offset
+    float yawOffset;   // YENI: Yaw offset (0 noktasi)
+    float targetHeading; // YENI: Hedef Yaw (Heading Hold)
+
+    // YENI: Aci farkini en kisa yoldan hesaplar (-180..180)
+    float getErrorShortestPath(float target, float current);
 
     void mixMotors(float throttle, float pitchPid, float rollPid, float yawPid);
 };

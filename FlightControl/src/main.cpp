@@ -79,9 +79,14 @@ void loop() {
     static unsigned long lastLog = 0;
     if (millis() - lastLog > 1000) {
         DroneAngles angles = droneImu.getAngles();
+        
+        // --- 0 Noktasina Gore Aci (Relative Yaw) ---
+        // Sag donus: +, Sol donus: -
+        float relativeYaw = dshotCtrl.getRelativeYaw();
+
         String msg = "Pitch: " + String(angles.pitch, 1) + 
                      " | Roll: " + String(angles.roll, 1) + 
-                     " | Yaw: " + String(angles.yaw, 1);
+                     " | Yaw(Rel): " + String(relativeYaw, 1);
         
         // Opsiyonel: Kumanda verisi (Radio)
         msg += " | Gaz: " + String(radioSystem.getLY()); // Gaz
